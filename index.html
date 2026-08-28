@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Duy Hoang Network - Video Recorder</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- Permission Overlay -->
+    <div id="permissionOverlay" class="permission-overlay hidden">
+        <div class="permission-card">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M23 7l-7 5 7 5V7z"/>
+                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+            </svg>
+            <h2>Cho phép truy cập camera</h2>
+            <p>Ứng dụng cần camera và microphone để quay video.</p>
+            <button id="permissionBtn" class="btn btn-primary">Cho phép camera</button>
+            <p class="permission-hint" id="permissionHint" style="display:none; margin-top:12px; font-size:13px; color:var(--text-secondary);">
+                Nếu trình duyệt đã chặn quyền, hãy mở cài đặt trình duyệt để cấp quyền camera và microphone.
+            </p>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <header class="app-header">
+        <div class="logo">
+            <span class="logo-icon">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6"/>
+                    <path d="M2 8a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4"/>
+                </svg>
+            </span>
+            <div class="logo-text">
+                <strong>DUY HOANG NETWORK</strong>
+                <span>Video Recorder</span>
+            </div>
+        </div>
+        <div class="header-actions">
+            <button id="themeToggleBtn" class="icon-btn" title="Chuyển giao diện sáng/tối">
+                <span id="themeIcon">🌙</span>
+            </button>
+            <button id="fullscreenBtn" class="icon-btn" title="Toàn màn hình">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Main App -->
+    <main class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <!-- Thiết bị -->
+            <div class="panel">
+                <h3 class="panel-title">Thiết bị</h3>
+                <div class="form-group">
+                    <label for="cameraSelect">Camera</label>
+                    <select id="cameraSelect" class="select"></select>
+                </div>
+                <div class="form-group">
+                    <label for="micSelect">Microphone</label>
+                    <select id="micSelect" class="select"></select>
+                </div>
+            </div>
+
+            <!-- Khung hình -->
+            <div class="panel">
+                <h3 class="panel-title">Khung hình</h3>
+                <div class="ratio-grid">
+                    <button class="ratio-btn" data-ratio="9:16">9:16</button>
+                    <button class="ratio-btn" data-ratio="16:9">16:9</button>
+                    <button class="ratio-btn" data-ratio="1:1">1:1</button>
+                    <button class="ratio-btn" data-ratio="4:5">4:5</button>
+                </div>
+            </div>
+
+            <!-- Tên video -->
+            <div class="panel">
+                <h3 class="panel-title">Tên video</h3>
+                <div class="form-group">
+                    <input type="text" id="videoNameInput" class="text-input" placeholder="Nhập tên video..." value="DuyHoangNetwork">
+                </div>
+                <small style="color:var(--text-secondary); font-size:12px;">Tên file sẽ tự động chuẩn hóa khi tải.</small>
+            </div>
+
+            <!-- Văn bản -->
+            <div class="panel">
+                <h3 class="panel-title">Văn bản overlay</h3>
+                <button id="addTextBtn" class="btn btn-primary btn-block">+ Thêm văn bản</button>
+                <div id="textList" class="text-list"></div>
+                <div id="textEditPanel" class="text-edit-panel hidden">
+                    <div class="form-group">
+                        <label>Nội dung</label>
+                        <input type="text" id="textContentInput" class="text-input" placeholder="Nhập nội dung...">
+                    </div>
+                    <div class="form-group">
+                        <label>Kích thước: <span id="sizeValue">24</span>px</label>
+                        <input type="range" id="fontSizeRange" min="12" max="100" value="24">
+                    </div>
+                    <div class="form-group">
+                        <label>Độ mờ: <span id="opacityValue">100</span>%</label>
+                        <input type="range" id="opacityRange" min="10" max="100" value="100">
+                    </div>
+                    <button id="deleteTextBtn" class="btn btn-danger btn-block">Xóa văn bản</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Workspace -->
+        <section class="workspace">
+            <div class="camera-stage" id="cameraStage">
+                <video id="cameraPreview" autoplay muted playsinline></video>
+                <div id="textOverlayLayer" class="overlay-layer"></div>
+                <div id="verticalGuide" class="guide vertical-guide hidden"></div>
+                <div id="horizontalGuide" class="guide horizontal-guide hidden"></div>
+                <div id="recordingIndicator" class="recording-indicator hidden">
+                    <span class="rec-dot"></span>
+                    <span id="recordingTime">00:00</span>
+                </div>
+            </div>
+
+            <!-- Record Controls -->
+            <div class="record-controls">
+                <div id="recordStatus" class="record-status">Sẵn sàng</div>
+                <div class="controls-row">
+                    <button id="startRecordBtn" class="btn btn-record">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="8"/></svg>
+                        Bắt đầu quay
+                    </button>
+                    <button id="pauseRecordBtn" class="btn btn-secondary hidden">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                        Tạm dừng
+                    </button>
+                    <button id="resumeRecordBtn" class="btn btn-secondary hidden">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>
+                        Tiếp tục
+                    </button>
+                    <button id="stopRecordBtn" class="btn btn-danger hidden">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12"/></svg>
+                        Dừng
+                    </button>
+                </div>
+
+                <!-- Recorded Panel -->
+                <div id="recordedPanel" class="recorded-panel hidden">
+                    <p>Video đã quay xong</p>
+                    <div class="recorded-actions">
+                        <button id="previewBtn" class="btn btn-secondary">Xem lại</button>
+                        <button id="downloadBtn" class="btn btn-primary">Tải video</button>
+                        <button id="resetBtn" class="btn btn-danger">Xóa & quay lại</button>
+                    </div>
+                    <video id="recordedVideo" class="recorded-video hidden" controls></video>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Toast -->
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>
