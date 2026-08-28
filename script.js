@@ -30,6 +30,7 @@ let currentTheme = 'dark';
 const videoPreview = document.getElementById('cameraPreview');
 const overlayLayer = document.getElementById('textOverlayLayer');
 const cameraStage = document.getElementById('cameraStage');
+const cameraWrapper = document.getElementById('cameraWrapper');
 const cameraSelect = document.getElementById('cameraSelect');
 const micSelect = document.getElementById('micSelect');
 const permissionOverlay = document.getElementById('permissionOverlay');
@@ -44,6 +45,12 @@ const sizeValue = document.getElementById('sizeValue');
 const opacityRange = document.getElementById('opacityRange');
 const opacityValue = document.getElementById('opacityValue');
 const deleteTextBtn = document.getElementById('deleteTextBtn');
+const quickTextTools = document.getElementById('quickTextTools');
+const quickFontSizeRange = document.getElementById('quickFontSizeRange');
+const quickSizeValue = document.getElementById('quickSizeValue');
+const quickOpacityRange = document.getElementById('quickOpacityRange');
+const quickOpacityValue = document.getElementById('quickOpacityValue');
+const quickDeleteTextBtn = document.getElementById('quickDeleteTextBtn');
 const videoNameInput = document.getElementById('videoNameInput');
 const startRecordBtn = document.getElementById('startRecordBtn');
 const pauseRecordBtn = document.getElementById('pauseRecordBtn');
@@ -69,6 +76,8 @@ document.addEventListener('DOMContentLoaded', () => {
     loadSettings();
     setupEventListeners();
     checkCameraPermission();
+    updateStageSize();
+    window.addEventListener('resize', updateStageSize);
 });
 
 function setupEventListeners() {
@@ -87,6 +96,16 @@ function setupEventListeners() {
     opacityRange.addEventListener('input', updateSelectedTextStyle);
     deleteTextBtn.addEventListener('click', deleteSelectedText);
     
+    quickFontSizeRange.addEventListener('input', (e) => {
+        fontSizeRange.value = e.target.value;
+        updateSelectedTextStyle();
+    });
+    quickOpacityRange.addEventListener('input', (e) => {
+        opacityRange.value = e.target.value;
+        updateSelectedTextStyle();
+    });
+    quickDeleteTextBtn.addEventListener('click', deleteSelectedText);
+    
     startRecordBtn.addEventListener('click', startRecording);
     pauseRecordBtn.addEventListener('click', pauseRecording);
     resumeRecordBtn.addEventListener('click', resumeRecording);
@@ -101,6 +120,39 @@ function setupEventListeners() {
     document.addEventListener('click', () => {
         toast.classList.add('hidden');
     });
+}
+
+// ==================== STAGE SIZE (MOBILE-FIRST) ====================
+function updateStageSize() {
+    const container = cameraWrapper;
+    const stage = cameraStage;
+    if (!container || !stage) return;
+    
+    const containerRect = container.getBoundingClientRect();
+    const availableWidth = containerRect.width;
+    const availableHeight = containerRect.height;
+    
+    if (availableWidth <= 0 || availableHeight <= 0) return;
+    
+    let ratio;
+    switch (currentAspectRatio) {
+        case '9:16': ratio = 9/16; break;
+        case '16:9': ratio = 16/9; break;
+        case '1:1': ratio = 1; break;
+        case '4:5': ratio = 4/5; break;
+        default: ratio = 16/9;
+    }
+    
+    let stageWidth = availableWidth;
+    let stageHeight = stageWidth / ratio;
+    
+    if (stageHeight > availableHeight) {
+        stageHeight = availableHeight;
+        stageWidth = stageHeight * ratio;
+    }
+    
+    stage.style.width = Math.floor(stageWidth) + 'px';
+    stage.style.height = Math.floor(stageHeight) + 'px';
 }
 
 // ==================== CAMERA & MIC ====================
@@ -282,27 +334,9 @@ function setAspectRatio(ratio) {
         btn.classList.toggle('active', btn.dataset.ratio === ratio);
     });
     
-    switch (ratio) {
-        case '9:16':
-            cameraStage.style.aspectRatio = '9/16';
-            cameraStage.style.maxWidth = '360px';
-            break;
-        case '16:9':
-            cameraStage.style.aspectRatio = '16/9';
-            cameraStage.style.maxWidth = '640px';
-            break;
-        case '1:1':
-            cameraStage.style.aspectRatio = '1/1';
-            cameraStage.style.maxWidth = '480px';
-            break;
-        case '4:5':
-            cameraStage.style.aspectRatio = '4/5';
-            cameraStage.style.maxWidth = '400px';
-            break;
-    }
-    
-    updateTextPositionsFromPercent();
     localStorage.setItem('aspectRatio', ratio);
+    updateStageSize();
+    updateTextPositionsFromPercent();
 }
 
 // ==================== TEXT OVERLAY ====================
@@ -341,6 +375,7 @@ function createTextElement(data) {
     el.style.cursor = 'move';
     el.style.userSelect = 'none';
     el.style.zIndex = '20';
+    el.style.touchAction = 'none';
     el.dataset.textId = data.id;
     
     const resizeHandle = document.createElement('div');
@@ -387,6 +422,13 @@ function selectText(id) {
             sizeValue.textContent = data.fontSize;
             opacityRange.value = data.opacity * 100;
             opacityValue.textContent = Math.round(data.opacity * 100);
+            
+            // Sync quick tools
+            quickFontSizeRange.value = data.fontSize;
+            quickSizeValue.textContent = data.fontSize;
+            quickOpacityRange.value = data.opacity * 100;
+            quickOpacityValue.textContent = Math.round(data.opacity * 100);
+            quickTextTools.classList.remove('hidden');
         }
     }
     updateTextList();
@@ -417,6 +459,12 @@ function updateSelectedTextStyle() {
     data.opacity = parseInt(opacityRange.value) / 100;
     opacityValue.textContent = parseInt(opacityRange.value);
     
+    // Sync quick tools
+    quickFontSizeRange.value = data.fontSize;
+    quickSizeValue.textContent = data.fontSize;
+    quickOpacityRange.value = data.opacity * 100;
+    quickOpacityValue.textContent = Math.round(data.opacity * 100);
+    
     updateTextElement(data);
     saveTextLayers();
 }
@@ -428,6 +476,7 @@ function deleteSelectedText() {
     textLayers = textLayers.filter(t => t.id !== selectedTextId);
     selectedTextId = null;
     textEditPanel.classList.add('hidden');
+    quickTextTools.classList.add('hidden');
     updateTextList();
     saveTextLayers();
 }
@@ -548,6 +597,8 @@ function onResize(e) {
         if (selectedTextId === data.id) {
             fontSizeRange.value = newSize;
             sizeValue.textContent = newSize;
+            quickFontSizeRange.value = newSize;
+            quickSizeValue.textContent = newSize;
         }
     }
 }
@@ -608,11 +659,8 @@ function getSupportedMimeType() {
 
 function sanitizeFileName(name) {
     let clean = name.trim();
-    // Loại bỏ ký tự không hợp lệ
     clean = clean.replace(/[<>:"/\\|?*\x00-\x1F]/g, '');
-    // Thay khoảng trắng bằng dấu gạch ngang
     clean = clean.replace(/\s+/g, '-');
-    // Nếu rỗng, tạo tên mặc định
     if (!clean) {
         const now = new Date();
         clean = `DuyHoangNetwork-${now.toISOString().slice(0,10)}`;
@@ -883,6 +931,13 @@ document.addEventListener('contextmenu', (e) => {
 });
 
 const resizeObserver = new ResizeObserver(() => {
+    updateStageSize();
     updateTextPositionsFromPercent();
 });
 resizeObserver.observe(overlayLayer);
+resizeObserver.observe(cameraWrapper);
+
+// Đảm bảo stage size đúng khi fullscreen thay đổi
+document.addEventListener('fullscreenchange', () => {
+    setTimeout(updateStageSize, 100);
+});
