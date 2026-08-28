@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Duy Hoang Network - Video Recorder</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -28,7 +28,7 @@
     <header class="app-header">
         <div class="logo">
             <span class="logo-icon">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="3"/>
                     <path d="M22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6"/>
                     <path d="M2 8a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4"/>
@@ -53,74 +53,33 @@
 
     <!-- Main App -->
     <main class="app">
-        <!-- Sidebar -->
-        <aside class="sidebar" id="sidebar">
-            <!-- Thiết bị -->
-            <div class="panel">
-                <h3 class="panel-title">Thiết bị</h3>
-                <div class="form-group">
-                    <label for="cameraSelect">Camera</label>
-                    <select id="cameraSelect" class="select"></select>
-                </div>
-                <div class="form-group">
-                    <label for="micSelect">Microphone</label>
-                    <select id="micSelect" class="select"></select>
-                </div>
-            </div>
-
-            <!-- Khung hình -->
-            <div class="panel">
-                <h3 class="panel-title">Khung hình</h3>
-                <div class="ratio-grid">
-                    <button class="ratio-btn" data-ratio="9:16">9:16</button>
-                    <button class="ratio-btn" data-ratio="16:9">16:9</button>
-                    <button class="ratio-btn" data-ratio="1:1">1:1</button>
-                    <button class="ratio-btn" data-ratio="4:5">4:5</button>
-                </div>
-            </div>
-
-            <!-- Tên video -->
-            <div class="panel">
-                <h3 class="panel-title">Tên video</h3>
-                <div class="form-group">
-                    <input type="text" id="videoNameInput" class="text-input" placeholder="Nhập tên video..." value="DuyHoangNetwork">
-                </div>
-                <small style="color:var(--text-secondary); font-size:12px;">Tên file sẽ tự động chuẩn hóa khi tải.</small>
-            </div>
-
-            <!-- Văn bản -->
-            <div class="panel">
-                <h3 class="panel-title">Văn bản overlay</h3>
-                <button id="addTextBtn" class="btn btn-primary btn-block">+ Thêm văn bản</button>
-                <div id="textList" class="text-list"></div>
-                <div id="textEditPanel" class="text-edit-panel hidden">
-                    <div class="form-group">
-                        <label>Nội dung</label>
-                        <input type="text" id="textContentInput" class="text-input" placeholder="Nhập nội dung...">
-                    </div>
-                    <div class="form-group">
-                        <label>Kích thước: <span id="sizeValue">24</span>px</label>
-                        <input type="range" id="fontSizeRange" min="12" max="100" value="24">
-                    </div>
-                    <div class="form-group">
-                        <label>Độ mờ: <span id="opacityValue">100</span>%</label>
-                        <input type="range" id="opacityRange" min="10" max="100" value="100">
-                    </div>
-                    <button id="deleteTextBtn" class="btn btn-danger btn-block">Xóa văn bản</button>
-                </div>
-            </div>
-        </aside>
-
-        <!-- Workspace -->
+        <!-- Workspace: Camera + Controls -->
         <section class="workspace">
-            <div class="camera-stage" id="cameraStage">
-                <video id="cameraPreview" autoplay muted playsinline></video>
-                <div id="textOverlayLayer" class="overlay-layer"></div>
-                <div id="verticalGuide" class="guide vertical-guide hidden"></div>
-                <div id="horizontalGuide" class="guide horizontal-guide hidden"></div>
-                <div id="recordingIndicator" class="recording-indicator hidden">
-                    <span class="rec-dot"></span>
-                    <span id="recordingTime">00:00</span>
+            <div class="camera-container" id="cameraWrapper">
+                <div class="camera-stage" id="cameraStage">
+                    <video id="cameraPreview" autoplay muted playsinline></video>
+                    <div id="textOverlayLayer" class="overlay-layer"></div>
+                    <div id="verticalGuide" class="guide vertical-guide hidden"></div>
+                    <div id="horizontalGuide" class="guide horizontal-guide hidden"></div>
+                    <div id="recordingIndicator" class="recording-indicator hidden">
+                        <span class="rec-dot"></span>
+                        <span id="recordingTime">00:00</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Text Tools (mobile) -->
+            <div id="quickTextTools" class="quick-text-tools hidden">
+                <div class="quick-tools-row">
+                    <div class="form-group">
+                        <label>Kích thước: <span id="quickSizeValue">24</span>px</label>
+                        <input type="range" id="quickFontSizeRange" min="12" max="100" value="24">
+                    </div>
+                    <div class="form-group">
+                        <label>Độ mờ: <span id="quickOpacityValue">100</span>%</label>
+                        <input type="range" id="quickOpacityRange" min="10" max="100" value="100">
+                    </div>
+                    <button id="quickDeleteTextBtn" class="btn btn-danger btn-sm">Xóa</button>
                 </div>
             </div>
 
@@ -158,6 +117,60 @@
                 </div>
             </div>
         </section>
+
+        <!-- Sidebar / Settings (mobile: below) -->
+        <aside class="sidebar" id="sidebar">
+            <div class="panel">
+                <h3 class="panel-title">Tên video</h3>
+                <div class="form-group">
+                    <input type="text" id="videoNameInput" class="text-input" placeholder="Nhập tên video..." value="DuyHoangNetwork">
+                </div>
+                <small style="color:var(--text-secondary); font-size:12px;">Tên file sẽ tự động chuẩn hóa khi tải.</small>
+            </div>
+
+            <div class="panel">
+                <h3 class="panel-title">Khung hình</h3>
+                <div class="ratio-grid">
+                    <button class="ratio-btn" data-ratio="9:16">9:16</button>
+                    <button class="ratio-btn" data-ratio="16:9">16:9</button>
+                    <button class="ratio-btn" data-ratio="1:1">1:1</button>
+                    <button class="ratio-btn" data-ratio="4:5">4:5</button>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3 class="panel-title">Thiết bị</h3>
+                <div class="form-group">
+                    <label for="cameraSelect">Camera</label>
+                    <select id="cameraSelect" class="select"></select>
+                </div>
+                <div class="form-group">
+                    <label for="micSelect">Microphone</label>
+                    <select id="micSelect" class="select"></select>
+                </div>
+            </div>
+
+            <div class="panel">
+                <h3 class="panel-title">Văn bản overlay</h3>
+                <button id="addTextBtn" class="btn btn-primary btn-block">+ Thêm văn bản</button>
+                <div id="textList" class="text-list"></div>
+                <div id="textEditPanel" class="text-edit-panel hidden">
+                    <div class="form-group">
+                        <label>Nội dung</label>
+                        <input type="text" id="textContentInput" class="text-input" placeholder="Nhập nội dung...">
+                    </div>
+                    <div class="form-group">
+                        <label>Kích thước: <span id="sizeValue">24</span>px</label>
+                        <input type="range" id="fontSizeRange" min="12" max="100" value="24">
+                    </div>
+                    <div class="form-group">
+                        <label>Độ mờ: <span id="opacityValue">100</span>%</label>
+                        <input type="range" id="opacityRange" min="10" max="100" value="100">
+                    </div>
+                    <button id="deleteTextBtn" class="btn btn-danger btn-block">Xóa văn bản</button>
+                </div>
+            </div>
+        </aside>
     </main>
 
     <!-- Toast -->
