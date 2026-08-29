@@ -43,7 +43,7 @@
             <button id="themeToggleBtn" class="icon-btn" title="Chuyển giao diện sáng/tối">
                 <span id="themeIcon">🌙</span>
             </button>
-            <button id="fullscreenBtn" class="icon-btn" title="Toàn màn hình">
+            <button id="fullscreenBtn" class="icon-btn" title="Toàn màn hình camera">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/>
                 </svg>
@@ -52,10 +52,10 @@
     </header>
 
     <!-- Main App -->
-    <main class="app">
-        <!-- Workspace: Camera + Controls -->
-        <section class="workspace">
-            <div class="camera-container" id="cameraWrapper">
+    <main class="app" id="mainApp">
+        <!-- Camera Section -->
+        <section class="camera-section" id="cameraSection">
+            <div class="camera-wrapper" id="cameraWrapper">
                 <div class="camera-stage" id="cameraStage">
                     <video id="cameraPreview" autoplay muted playsinline></video>
                     <div id="textOverlayLayer" class="overlay-layer"></div>
@@ -68,23 +68,8 @@
                 </div>
             </div>
 
-            <!-- Quick Text Tools (mobile) -->
-            <div id="quickTextTools" class="quick-text-tools hidden">
-                <div class="quick-tools-row">
-                    <div class="form-group">
-                        <label>Kích thước: <span id="quickSizeValue">24</span>px</label>
-                        <input type="range" id="quickFontSizeRange" min="12" max="100" value="24">
-                    </div>
-                    <div class="form-group">
-                        <label>Độ mờ: <span id="quickOpacityValue">100</span>%</label>
-                        <input type="range" id="quickOpacityRange" min="10" max="100" value="100">
-                    </div>
-                    <button id="quickDeleteTextBtn" class="btn btn-danger btn-sm">Xóa</button>
-                </div>
-            </div>
-
             <!-- Record Controls -->
-            <div class="record-controls">
+            <div class="record-controls" id="recordControls">
                 <div id="recordStatus" class="record-status">Sẵn sàng</div>
                 <div class="controls-row">
                     <button id="startRecordBtn" class="btn btn-record">
@@ -118,8 +103,8 @@
             </div>
         </section>
 
-        <!-- Sidebar / Settings -->
-        <aside class="sidebar" id="sidebar">
+        <!-- Settings Section (scrollable below) -->
+        <section class="settings-section" id="settingsSection">
             <div class="panel">
                 <h3 class="panel-title">Tên video</h3>
                 <div class="form-group">
@@ -161,24 +146,35 @@
                 <h3 class="panel-title">Văn bản overlay</h3>
                 <button id="addTextBtn" class="btn btn-primary btn-block">+ Thêm văn bản</button>
                 <div id="textList" class="text-list"></div>
-                <div id="textEditPanel" class="text-edit-panel hidden">
-                    <div class="form-group">
-                        <label>Nội dung</label>
-                        <input type="text" id="textContentInput" class="text-input" placeholder="Nhập nội dung...">
-                    </div>
-                    <div class="form-group">
-                        <label>Kích thước: <span id="sizeValue">24</span>px</label>
-                        <input type="range" id="fontSizeRange" min="12" max="100" value="24">
-                    </div>
-                    <div class="form-group">
-                        <label>Độ mờ: <span id="opacityValue">100</span>%</label>
-                        <input type="range" id="opacityRange" min="10" max="100" value="100">
-                    </div>
-                    <button id="deleteTextBtn" class="btn btn-danger btn-block">Xóa văn bản</button>
-                </div>
             </div>
-        </aside>
+        </section>
     </main>
+
+    <!-- Text Editing Mode (fullscreen overlay) -->
+    <div id="textEditOverlay" class="text-edit-overlay hidden">
+        <div class="text-edit-header">
+            <button id="cancelTextEditBtn" class="btn btn-secondary btn-sm">Hủy</button>
+            <span>Chỉnh văn bản</span>
+            <button id="doneTextEditBtn" class="btn btn-primary btn-sm">Xong</button>
+        </div>
+        <div class="text-edit-camera" id="textEditCameraWrapper">
+            <div class="camera-stage" id="textEditCameraStage">
+                <video id="textEditCameraPreview" autoplay muted playsinline></video>
+                <div id="textEditOverlayLayer" class="overlay-layer"></div>
+            </div>
+        </div>
+        <div class="text-edit-tools">
+            <div class="form-group">
+                <label>Kích thước: <span id="editSizeValue">24</span>px</label>
+                <input type="range" id="editFontSizeRange" min="12" max="100" value="24">
+            </div>
+            <div class="form-group">
+                <label>Độ mờ: <span id="editOpacityValue">100</span>%</label>
+                <input type="range" id="editOpacityRange" min="10" max="100" value="100">
+            </div>
+            <button id="editDeleteTextBtn" class="btn btn-danger btn-sm btn-block">Xóa văn bản</button>
+        </div>
+    </div>
 
     <!-- Toast -->
     <div id="toast" class="toast hidden"></div>
