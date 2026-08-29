@@ -154,7 +154,7 @@
     <div id="textEditOverlay" class="text-edit-overlay hidden">
         <div class="text-edit-header">
             <button id="cancelTextEditBtn" class="btn btn-secondary btn-sm">Hủy</button>
-            <span>Chỉnh văn bản</span>
+            <span id="textEditTitle">Chỉnh văn bản</span>
             <button id="doneTextEditBtn" class="btn btn-primary btn-sm">Xong</button>
         </div>
         <div class="text-edit-camera" id="textEditCameraWrapper">
@@ -163,17 +163,19 @@
                 <div id="textEditOverlayLayer" class="overlay-layer"></div>
             </div>
         </div>
-        <div class="text-edit-tools">
-            <div class="form-group">
+        <div class="text-edit-tools" id="textEditTools">
+            <div class="form-group" id="opacityGroup">
                 <label>Độ mờ: <span id="editOpacityValue">100</span>%</label>
                 <input type="range" id="editOpacityRange" min="10" max="100" value="100">
             </div>
-            <button id="editDeleteTextBtn" class="btn btn-danger btn-sm btn-block">🗑 Xóa văn bản</button>
+            <div class="form-group" id="textareaGroup" style="display:none;">
+                <label>Nhập nội dung</label>
+                <textarea id="editTextarea" class="edit-textarea" rows="2"></textarea>
+                <button id="pasteTextBtn" class="btn btn-secondary btn-sm btn-block">📋 Dán</button>
+            </div>
+            <button id="editDeleteTextBtn" class="btn btn-danger btn-sm btn-block" style="display:none;">🗑 Xóa văn bản</button>
         </div>
     </div>
-
-    <!-- Hidden textarea for editing -->
-    <textarea id="hiddenTextEditor" class="hidden-text-editor"></textarea>
 
     <!-- Toast -->
     <div id="toast" class="toast hidden"></div>
