@@ -32,8 +32,9 @@ let canvasAnimationFrame = null;
 let canvasOutput = null;
 let canvasCtx = null;
 let isTextEditingMode = false;
-let textEditStream = null;
-let textEditVideoTrack = null;
+let isEditingText = false;
+let editingTextId = null;
+let editingTextBackup = '';
 
 // ==================== DOM ====================
 const videoPreview = document.getElementById('cameraPreview');
@@ -76,11 +77,12 @@ const textEditCameraWrapper = document.getElementById('textEditCameraWrapper');
 const textEditCameraStage = document.getElementById('textEditCameraStage');
 const textEditCameraPreview = document.getElementById('textEditCameraPreview');
 const textEditOverlayLayer = document.getElementById('textEditOverlayLayer');
-const editFontSizeRange = document.getElementById('editFontSizeRange');
-const editSizeValue = document.getElementById('editSizeValue');
 const editOpacityRange = document.getElementById('editOpacityRange');
 const editOpacityValue = document.getElementById('editOpacityValue');
 const editDeleteTextBtn = document.getElementById('editDeleteTextBtn');
+
+// Hidden text editor
+const hiddenTextEditor = document.getElementById('hiddenTextEditor');
 
 // ==================== INIT ====================
 document.addEventListener('DOMContentLoaded', () => {
@@ -109,29 +111,32 @@ function setupEventListeners() {
     addTextBtn.addEventListener('click', () => {
         addText('Văn bản mới');
         enterTextEditingMode();
+        // Không tự động focus, chỉ chọn text
     });
     
     // Text editing overlay events
-    cancelTextEditBtn.addEventListener('click', exitTextEditingMode);
-    doneTextEditBtn.addEventListener('click', exitTextEditingMode);
+    cancelTextEditBtn.addEventListener('click', () => {
+        if (isEditingText) cancelEditText();
+        exitTextEditingMode();
+    });
+    
+    doneTextEditBtn.addEventListener('click', () => {
+        if (isEditingText) finishEditText();
+        exitTextEditingMode();
+    });
+    
     editDeleteTextBtn.addEventListener('click', () => {
         if (selectedTextId) {
             deleteSelectedText();
             if (textLayers.length === 0) {
                 exitTextEditingMode();
+            } else {
+                selectText(textLayers[0].id);
+                syncTextEditUI();
             }
         }
     });
-    editFontSizeRange.addEventListener('input', (e) => {
-        if (!selectedTextId) return;
-        const data = getTextData(selectedTextId);
-        if (data) {
-            data.fontSize = parseInt(e.target.value);
-            editSizeValue.textContent = e.target.value;
-            updateTextElement(data);
-            saveTextLayers();
-        }
-    });
+    
     editOpacityRange.addEventListener('input', (e) => {
         if (!selectedTextId) return;
         const data = getTextData(selectedTextId);
@@ -157,13 +162,39 @@ function setupEventListeners() {
     document.addEventListener('click', () => {
         toast.classList.add('hidden');
     });
+
+    // Xử lý chạm ra ngoài để deselect
+    document.addEventListener('pointerdown', (e) => {
+        if (!e.target.closest('.text-overlay') && !e.target.closest('.text-handle')) {
+            deselectText();
+        }
+    });
+
+    // Xử lý keyboard viewport
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', handleVisualViewportResize);
+    }
+}
+
+function handleVisualViewportResize() {
+    if (isTextEditingMode) {
+        const viewport = window.visualViewport;
+        const textEditOverlayEl = document.getElementById('textEditOverlay');
+        if (textEditOverlayEl && viewport.height < window.innerHeight) {
+            // Bàn phím mở
+            textEditOverlayEl.style.height = viewport.height + 'px';
+            textEditOverlayEl.style.position = 'fixed';
+            textEditOverlayEl.style.top = '0';
+        } else {
+            textEditOverlayEl.style.height = '';
+        }
+    }
 }
 
 // ==================== STAGE SIZE ====================
 function updateStageSize() {
     const stage = cameraStage;
     if (!stage) return;
-    
     stage.style.aspectRatio = getRatioValue(currentAspectRatio);
 }
 
@@ -390,7 +421,6 @@ function setAspectRatio(ratio) {
     localStorage.setItem('aspectRatio', ratio);
     updateStageSize();
     
-    // Cập nhật cả text edit stage nếu đang mở
     if (textEditCameraStage) {
         textEditCameraStage.style.aspectRatio = getRatioValue(ratio);
     }
@@ -407,7 +437,10 @@ function addText(content = 'Văn bản mới') {
         xPercent: 50,
         yPercent: 50,
         fontSize: 24,
-        opacity: 1
+        opacity: 1,
+        width: 200,
+        height: 60,
+        rotation: 0
     };
     
     textLayers.push(textData);
@@ -415,109 +448,183 @@ function addText(content = 'Văn bản mới') {
     selectText(id);
     updateTextList();
     saveTextLayers();
+    return id;
 }
 
 function createTextElement(data) {
     const el = document.createElement('div');
     el.className = 'text-overlay';
     el.id = data.id;
-    el.textContent = data.content;
     el.style.position = 'absolute';
     el.style.left = `${data.xPercent}%`;
     el.style.top = `${data.yPercent}%`;
-    el.style.transform = `translate(-50%, -50%)`;
+    el.style.transform = `translate(-50%, -50%) rotate(${data.rotation}deg)`;
+    el.style.width = `${data.width}px`;
+    el.style.height = `${data.height}px`;
     el.style.fontSize = `${data.fontSize}px`;
     el.style.opacity = data.opacity;
     el.style.fontWeight = 'bold';
     el.style.textShadow = '0 0 4px rgba(0,0,0,0.5)';
-    el.style.padding = '4px 8px';
     el.style.cursor = 'move';
     el.style.userSelect = 'none';
     el.style.zIndex = '20';
     el.style.touchAction = 'none';
     el.dataset.textId = data.id;
-    
-    const resizeHandle = document.createElement('div');
-    resizeHandle.className = 'resize-handle';
-    el.appendChild(resizeHandle);
-    
-    el.addEventListener('pointerdown', (e) => startDrag(e, data.id));
-    el.addEventListener('dblclick', (e) => {
+
+    const textContent = document.createElement('div');
+    textContent.className = 'text-content';
+    textContent.textContent = data.content;
+    textContent.style.width = '100%';
+    textContent.style.height = '100%';
+    textContent.style.display = 'flex';
+    textContent.style.alignItems = 'center';
+    textContent.style.justifyContent = 'center';
+    textContent.style.wordBreak = 'break-word';
+    textContent.style.whiteSpace = 'pre-wrap';
+    textContent.style.cursor = 'move';
+    textContent.style.userSelect = 'none';
+    textContent.style.textAlign = 'center';
+    textContent.style.outline = 'none';
+    textContent.style.background = 'transparent';
+    textContent.style.border = 'none';
+    textContent.style.color = '#fff';
+    textContent.style.font = 'inherit';
+    textContent.style.resize = 'none';
+    textContent.style.overflow = 'hidden';
+    textContent.setAttribute('contenteditable', 'false');
+    textContent.dataset.textContentId = data.id;
+    el.appendChild(textContent);
+
+    createHandle(el, 'rotate', 'handle-rotate', '↻');
+    createHandle(el, 'edit', 'handle-edit', '✎');
+    createHandle(el, 'width', 'handle-width', '↔');
+    createHandle(el, 'height', 'handle-height', '↕');
+    createHandle(el, 'resize', 'handle-resize', '↗');
+    createHandle(el, 'delete', 'handle-delete', '🗑');
+
+    textContent.addEventListener('pointerdown', (e) => {
+        if (e.target.closest('.text-handle')) return;
+        e.preventDefault();
         e.stopPropagation();
         selectText(data.id);
-        enterTextEditingMode();
+        startDrag(e, data.id);
     });
-    
-    resizeHandle.addEventListener('pointerdown', (e) => startResize(e, data.id));
-    
+
+    textContent.addEventListener('dblclick', (e) => {
+        e.stopPropagation();
+        selectText(data.id);
+        startEditText(data.id);
+    });
+
+    const handleElements = el.querySelectorAll('.text-handle');
+    handleElements.forEach(handle => {
+        const handleType = handle.classList[1]?.replace('handle-', '');
+        if (handleType === 'rotate') {
+            handle.addEventListener('pointerdown', (e) => startRotate(e, data.id));
+        } else if (handleType === 'edit') {
+            handle.addEventListener('pointerdown', (e) => {
+                e.stopPropagation();
+                selectText(data.id);
+                startEditText(data.id);
+            });
+        } else if (handleType === 'width') {
+            handle.addEventListener('pointerdown', (e) => startWidthResize(e, data.id));
+        } else if (handleType === 'height') {
+            handle.addEventListener('pointerdown', (e) => startHeightResize(e, data.id));
+        } else if (handleType === 'resize') {
+            handle.addEventListener('pointerdown', (e) => startScaleResize(e, data.id));
+        } else if (handleType === 'delete') {
+            handle.addEventListener('pointerdown', (e) => {
+                e.stopPropagation();
+                selectText(data.id);
+                deleteSelectedText();
+            });
+        }
+    });
+
     overlayLayer.appendChild(el);
-    
-    // Nếu đang trong text editing mode, tạo bản sao cho overlay của text edit
-    if (isTextEditingMode) {
-        createTextEditElement(data);
-    }
 }
 
-function createTextEditElement(data) {
-    const el = document.createElement('div');
-    el.className = 'text-overlay';
-    el.id = `edit-${data.id}`;
-    el.textContent = data.content;
-    el.style.position = 'absolute';
-    el.style.left = `${data.xPercent}%`;
-    el.style.top = `${data.yPercent}%`;
-    el.style.transform = `translate(-50%, -50%)`;
-    el.style.fontSize = `${data.fontSize}px`;
-    el.style.opacity = data.opacity;
-    el.style.fontWeight = 'bold';
-    el.style.textShadow = '0 0 4px rgba(0,0,0,0.5)';
-    el.style.padding = '4px 8px';
-    el.style.cursor = 'move';
-    el.style.userSelect = 'none';
-    el.style.zIndex = '20';
-    el.style.touchAction = 'none';
-    el.dataset.textId = data.id;
-    
-    textEditOverlayLayer.appendChild(el);
+function createHandle(parent, type, className, icon) {
+    const handle = document.createElement('div');
+    handle.className = `text-handle ${className}`;
+    handle.innerHTML = icon;
+    handle.setAttribute('data-handle-type', type);
+    handle.style.pointerEvents = 'auto';
+    handle.style.touchAction = 'none';
+    handle.setAttribute('aria-label', type);
+    parent.appendChild(handle);
 }
 
 function updateTextElement(data) {
     const el = document.getElementById(data.id);
     if (el) {
-        el.textContent = data.content;
         el.style.left = `${data.xPercent}%`;
         el.style.top = `${data.yPercent}%`;
+        el.style.transform = `translate(-50%, -50%) rotate(${data.rotation}deg)`;
+        el.style.width = `${data.width}px`;
+        el.style.height = `${data.height}px`;
         el.style.fontSize = `${data.fontSize}px`;
         el.style.opacity = data.opacity;
+        
+        const textContent = el.querySelector('.text-content');
+        if (textContent) {
+            textContent.textContent = data.content;
+        }
     }
-    const editEl = document.getElementById(`edit-${data.id}`);
-    if (editEl) {
-        editEl.textContent = data.content;
-        editEl.style.left = `${data.xPercent}%`;
-        editEl.style.top = `${data.yPercent}%`;
-        editEl.style.fontSize = `${data.fontSize}px`;
-        editEl.style.opacity = data.opacity;
+    
+    if (isTextEditingMode) {
+        const editEl = document.getElementById(`edit-${data.id}`);
+        if (editEl) {
+            editEl.style.left = `${data.xPercent}%`;
+            editEl.style.top = `${data.yPercent}%`;
+            editEl.style.transform = `translate(-50%, -50%) rotate(${data.rotation}deg)`;
+            editEl.style.width = `${data.width}px`;
+            editEl.style.height = `${data.height}px`;
+            editEl.style.fontSize = `${data.fontSize}px`;
+            editEl.style.opacity = data.opacity;
+            
+            const editTextContent = editEl.querySelector('.text-content');
+            if (editTextContent) {
+                editTextContent.textContent = data.content;
+            }
+        }
     }
 }
 
 function selectText(id) {
-    if (selectedTextId) {
+    if (selectedTextId && selectedTextId !== id) {
         const prevEl = document.getElementById(selectedTextId);
         if (prevEl) prevEl.classList.remove('selected');
+        if (isTextEditingMode) {
+            const prevEditEl = document.getElementById(`edit-${selectedTextId}`);
+            if (prevEditEl) prevEditEl.classList.remove('selected');
+        }
     }
     selectedTextId = id;
     const el = document.getElementById(id);
     if (el) {
         el.classList.add('selected');
-        const data = getTextData(id);
-        if (data) {
-            editFontSizeRange.value = data.fontSize;
-            editSizeValue.textContent = data.fontSize;
-            editOpacityRange.value = data.opacity * 100;
-            editOpacityValue.textContent = Math.round(data.opacity * 100);
-        }
+    }
+    if (isTextEditingMode) {
+        const editEl = document.getElementById(`edit-${id}`);
+        if (editEl) editEl.classList.add('selected');
+        syncTextEditUI();
     }
     updateTextList();
+}
+
+function deselectText() {
+    if (selectedTextId) {
+        const el = document.getElementById(selectedTextId);
+        if (el) el.classList.remove('selected');
+        if (isTextEditingMode) {
+            const editEl = document.getElementById(`edit-${selectedTextId}`);
+            if (editEl) editEl.classList.remove('selected');
+        }
+        selectedTextId = null;
+        updateTextList();
+    }
 }
 
 function getTextData(id) {
@@ -528,8 +635,10 @@ function deleteSelectedText() {
     if (!selectedTextId) return;
     const el = document.getElementById(selectedTextId);
     if (el) el.remove();
-    const editEl = document.getElementById(`edit-${selectedTextId}`);
-    if (editEl) editEl.remove();
+    if (isTextEditingMode) {
+        const editEl = document.getElementById(`edit-${selectedTextId}`);
+        if (editEl) editEl.remove();
+    }
     textLayers = textLayers.filter(t => t.id !== selectedTextId);
     selectedTextId = null;
     updateTextList();
@@ -555,7 +664,13 @@ function updateTextList() {
             e.stopPropagation();
             const el = document.getElementById(layer.id);
             if (el) {
-                el.style.display = el.style.display === 'none' ? 'inline-flex' : 'none';
+                el.style.display = el.style.display === 'none' ? 'block' : 'none';
+            }
+            if (isTextEditingMode) {
+                const editEl = document.getElementById(`edit-${layer.id}`);
+                if (editEl) {
+                    editEl.style.display = editEl.style.display === 'none' ? 'block' : 'none';
+                }
             }
         });
         item.appendChild(visibilitySpan);
@@ -564,37 +679,179 @@ function updateTextList() {
     });
 }
 
+// ==================== EDIT TEXT FUNCTIONALITY ====================
+function startEditText(id) {
+    const data = getTextData(id);
+    if (!data) return;
+    selectText(id);
+    
+    // Lưu backup nội dung
+    editingTextId = id;
+    editingTextBackup = data.content;
+    isEditingText = true;
+    
+    // Xóa nội dung hiển thị
+    data.content = '';
+    updateTextElement(data);
+    updateTextList();
+    saveTextLayers();
+    
+    // Đặt giá trị rỗng cho textarea ẩn và focus
+    hiddenTextEditor.value = '';
+    hiddenTextEditor.focus();
+    
+    // Lắng nghe input
+    hiddenTextEditor.addEventListener('input', handleTextEditorInput);
+}
+
+function handleTextEditorInput() {
+    const data = getTextData(editingTextId);
+    if (data) {
+        data.content = hiddenTextEditor.value;
+        updateTextElement(data);
+        updateTextList();
+        saveTextLayers();
+    }
+}
+
+function finishEditText() {
+    if (isEditingText) {
+        isEditingText = false;
+        hiddenTextEditor.removeEventListener('input', handleTextEditorInput);
+        hiddenTextEditor.blur();
+        editingTextId = null;
+        editingTextBackup = '';
+    }
+}
+
+function cancelEditText() {
+    if (isEditingText && editingTextId) {
+        const data = getTextData(editingTextId);
+        if (data) {
+            data.content = editingTextBackup;
+            updateTextElement(data);
+            updateTextList();
+            saveTextLayers();
+        }
+        // Kết thúc edit nhưng giữ text
+        isEditingText = false;
+        hiddenTextEditor.removeEventListener('input', handleTextEditorInput);
+        hiddenTextEditor.blur();
+        editingTextId = null;
+        editingTextBackup = '';
+    }
+}
+
 // ==================== TEXT EDITING MODE ====================
 function enterTextEditingMode() {
     if (textLayers.length === 0) return;
     isTextEditingMode = true;
     
-    // Dừng camera chính
-    if (videoPreview.srcObject) {
-        // Lưu stream để dùng lại
-    }
-    
-    // Tạo bản sao text elements vào overlay của text edit
     textEditOverlayLayer.innerHTML = '';
+    
     textLayers.forEach(data => {
-        createTextEditElement(data);
+        const el = document.createElement('div');
+        el.className = 'text-overlay';
+        el.id = `edit-${data.id}`;
+        el.style.position = 'absolute';
+        el.style.left = `${data.xPercent}%`;
+        el.style.top = `${data.yPercent}%`;
+        el.style.transform = `translate(-50%, -50%) rotate(${data.rotation}deg)`;
+        el.style.width = `${data.width}px`;
+        el.style.height = `${data.height}px`;
+        el.style.fontSize = `${data.fontSize}px`;
+        el.style.opacity = data.opacity;
+        el.style.fontWeight = 'bold';
+        el.style.textShadow = '0 0 4px rgba(0,0,0,0.5)';
+        el.style.cursor = 'move';
+        el.style.userSelect = 'none';
+        el.style.zIndex = '20';
+        el.style.touchAction = 'none';
+        el.dataset.textId = data.id;
+        
+        const textContent = document.createElement('div');
+        textContent.className = 'text-content';
+        textContent.textContent = data.content;
+        textContent.style.width = '100%';
+        textContent.style.height = '100%';
+        textContent.style.display = 'flex';
+        textContent.style.alignItems = 'center';
+        textContent.style.justifyContent = 'center';
+        textContent.style.wordBreak = 'break-word';
+        textContent.style.whiteSpace = 'pre-wrap';
+        textContent.style.cursor = 'move';
+        textContent.style.userSelect = 'none';
+        textContent.style.textAlign = 'center';
+        textContent.style.outline = 'none';
+        textContent.style.background = 'transparent';
+        textContent.style.border = 'none';
+        textContent.style.color = '#fff';
+        textContent.style.font = 'inherit';
+        textContent.style.resize = 'none';
+        textContent.style.overflow = 'hidden';
+        textContent.setAttribute('contenteditable', 'false');
+        el.appendChild(textContent);
+        
+        createHandle(el, 'rotate', 'handle-rotate', '↻');
+        createHandle(el, 'edit', 'handle-edit', '✎');
+        createHandle(el, 'width', 'handle-width', '↔');
+        createHandle(el, 'height', 'handle-height', '↕');
+        createHandle(el, 'resize', 'handle-resize', '↗');
+        createHandle(el, 'delete', 'handle-delete', '🗑');
+        
+        textContent.addEventListener('pointerdown', (e) => {
+            if (e.target.closest('.text-handle')) return;
+            e.preventDefault();
+            e.stopPropagation();
+            selectText(data.id);
+            startDrag(e, data.id);
+        });
+        
+        textContent.addEventListener('dblclick', (e) => {
+            e.stopPropagation();
+            selectText(data.id);
+            startEditText(data.id);
+        });
+        
+        const handleElements = el.querySelectorAll('.text-handle');
+        handleElements.forEach(handle => {
+            const handleType = handle.classList[1]?.replace('handle-', '');
+            if (handleType === 'rotate') {
+                handle.addEventListener('pointerdown', (e) => startRotate(e, data.id));
+            } else if (handleType === 'edit') {
+                handle.addEventListener('pointerdown', (e) => {
+                    e.stopPropagation();
+                    selectText(data.id);
+                    startEditText(data.id);
+                });
+            } else if (handleType === 'width') {
+                handle.addEventListener('pointerdown', (e) => startWidthResize(e, data.id));
+            } else if (handleType === 'height') {
+                handle.addEventListener('pointerdown', (e) => startHeightResize(e, data.id));
+            } else if (handleType === 'resize') {
+                handle.addEventListener('pointerdown', (e) => startScaleResize(e, data.id));
+            } else if (handleType === 'delete') {
+                handle.addEventListener('pointerdown', (e) => {
+                    e.stopPropagation();
+                    selectText(data.id);
+                    deleteSelectedText();
+                });
+            }
+        });
+        
+        textEditOverlayLayer.appendChild(el);
     });
     
-    // Set camera preview cho text edit
     textEditCameraPreview.srcObject = videoPreview.srcObject;
     textEditCameraStage.style.aspectRatio = getRatioValue(currentAspectRatio);
     
-    // Cập nhật tool values
     if (selectedTextId) {
-        const data = getTextData(selectedTextId);
-        if (data) {
-            editFontSizeRange.value = data.fontSize;
-            editSizeValue.textContent = data.fontSize;
-            editOpacityRange.value = data.opacity * 100;
-            editOpacityValue.textContent = Math.round(data.opacity * 100);
-        }
+        selectText(selectedTextId);
+    } else if (textLayers.length > 0) {
+        selectText(textLayers[0].id);
     }
     
+    syncTextEditUI();
     textEditOverlay.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
 }
@@ -604,15 +861,24 @@ function exitTextEditingMode() {
     textEditOverlay.classList.add('hidden');
     document.body.style.overflow = '';
     
-    // Xóa bản sao text elements
     textEditOverlayLayer.innerHTML = '';
     textEditCameraPreview.srcObject = null;
 }
 
-// ==================== DRAG & RESIZE ====================
+function syncTextEditUI() {
+    if (!selectedTextId) return;
+    const data = getTextData(selectedTextId);
+    if (data) {
+        editOpacityRange.value = data.opacity * 100;
+        editOpacityValue.textContent = Math.round(data.opacity * 100);
+    }
+}
+
+// ==================== DRAG & HANDLERS (giữ nguyên) ====================
 function startDrag(e, id) {
-    if (e.target.classList.contains('resize-handle')) return;
+    if (e.target.closest('.text-handle')) return;
     e.preventDefault();
+    e.stopPropagation();
     const data = getTextData(id);
     if (!data) return;
     selectText(id);
@@ -620,6 +886,7 @@ function startDrag(e, id) {
     const overlay = isTextEditingMode ? textEditOverlayLayer : overlayLayer;
     const rect = overlay.getBoundingClientRect();
     dragData = {
+        type: 'drag',
         id: id,
         startX: e.clientX,
         startY: e.clientY,
@@ -636,7 +903,7 @@ function startDrag(e, id) {
 }
 
 function onDrag(e) {
-    if (!isDragging || !dragData) return;
+    if (!isDragging || !dragData || dragData.type !== 'drag') return;
     e.preventDefault();
     
     const dx = e.clientX - dragData.startX;
@@ -664,16 +931,87 @@ function stopDrag() {
     saveTextLayers();
 }
 
-function startResize(e, id) {
+function startWidthResize(e, id) {
     e.preventDefault();
     e.stopPropagation();
-    selectText(id);
     const data = getTextData(id);
     if (!data) return;
+    selectText(id);
     
     const overlay = isTextEditingMode ? textEditOverlayLayer : overlayLayer;
     const rect = overlay.getBoundingClientRect();
     dragData = {
+        type: 'width',
+        id: id,
+        startX: e.clientX,
+        origWidth: data.width,
+        containerWidth: rect.width
+    };
+    isResizing = true;
+    
+    document.addEventListener('pointermove', onWidthResize);
+    document.addEventListener('pointerup', stopResize);
+    document.addEventListener('pointercancel', stopResize);
+}
+
+function onWidthResize(e) {
+    if (!isResizing || !dragData || dragData.type !== 'width') return;
+    e.preventDefault();
+    const dx = e.clientX - dragData.startX;
+    const data = getTextData(dragData.id);
+    if (data) {
+        const newWidth = Math.max(40, dragData.origWidth + dx);
+        data.width = Math.round(newWidth);
+        updateTextElement(data);
+    }
+}
+
+function startHeightResize(e, id) {
+    e.preventDefault();
+    e.stopPropagation();
+    const data = getTextData(id);
+    if (!data) return;
+    selectText(id);
+    
+    const overlay = isTextEditingMode ? textEditOverlayLayer : overlayLayer;
+    const rect = overlay.getBoundingClientRect();
+    dragData = {
+        type: 'height',
+        id: id,
+        startY: e.clientY,
+        origHeight: data.height,
+        containerHeight: rect.height
+    };
+    isResizing = true;
+    
+    document.addEventListener('pointermove', onHeightResize);
+    document.addEventListener('pointerup', stopResize);
+    document.addEventListener('pointercancel', stopResize);
+}
+
+function onHeightResize(e) {
+    if (!isResizing || !dragData || dragData.type !== 'height') return;
+    e.preventDefault();
+    const dy = e.clientY - dragData.startY;
+    const data = getTextData(dragData.id);
+    if (data) {
+        const newHeight = Math.max(40, dragData.origHeight + dy);
+        data.height = Math.round(newHeight);
+        updateTextElement(data);
+    }
+}
+
+function startScaleResize(e, id) {
+    e.preventDefault();
+    e.stopPropagation();
+    const data = getTextData(id);
+    if (!data) return;
+    selectText(id);
+    
+    const overlay = isTextEditingMode ? textEditOverlayLayer : overlayLayer;
+    const rect = overlay.getBoundingClientRect();
+    dragData = {
+        type: 'scale',
         id: id,
         startX: e.clientX,
         startY: e.clientY,
@@ -683,15 +1021,14 @@ function startResize(e, id) {
     };
     isResizing = true;
     
-    document.addEventListener('pointermove', onResize);
+    document.addEventListener('pointermove', onScaleResize);
     document.addEventListener('pointerup', stopResize);
     document.addEventListener('pointercancel', stopResize);
 }
 
-function onResize(e) {
-    if (!isResizing || !dragData) return;
+function onScaleResize(e) {
+    if (!isResizing || !dragData || dragData.type !== 'scale') return;
     e.preventDefault();
-    
     const dx = e.clientX - dragData.startX;
     const dy = e.clientY - dragData.startY;
     const distance = Math.sqrt(dx * dx + dy * dy);
@@ -702,17 +1039,69 @@ function onResize(e) {
     if (data) {
         data.fontSize = newSize;
         updateTextElement(data);
-        if (selectedTextId === data.id) {
-            editFontSizeRange.value = newSize;
-            editSizeValue.textContent = newSize;
+    }
+}
+
+function startRotate(e, id) {
+    e.preventDefault();
+    e.stopPropagation();
+    const data = getTextData(id);
+    if (!data) return;
+    selectText(id);
+    
+    const overlay = isTextEditingMode ? textEditOverlayLayer : overlayLayer;
+    const rect = overlay.getBoundingClientRect();
+    const centerX = rect.left + (data.xPercent / 100) * rect.width;
+    const centerY = rect.top + (data.yPercent / 100) * rect.height;
+    
+    dragData = {
+        type: 'rotate',
+        id: id,
+        startAngle: Math.atan2(e.clientY - centerY, e.clientX - centerX) * 180 / Math.PI,
+        origRotation: data.rotation
+    };
+    isResizing = true;
+    
+    document.addEventListener('pointermove', onRotate);
+    document.addEventListener('pointerup', stopResize);
+    document.addEventListener('pointercancel', stopResize);
+}
+
+function onRotate(e) {
+    if (!isResizing || !dragData || dragData.type !== 'rotate') return;
+    e.preventDefault();
+    
+    const overlay = isTextEditingMode ? textEditOverlayLayer : overlayLayer;
+    const rect = overlay.getBoundingClientRect();
+    const data = getTextData(dragData.id);
+    if (!data) return;
+    const centerX = rect.left + (data.xPercent / 100) * rect.width;
+    const centerY = rect.top + (data.yPercent / 100) * rect.height;
+    const currentAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * 180 / Math.PI;
+    let deltaAngle = currentAngle - dragData.startAngle;
+    let newRotation = dragData.origRotation + deltaAngle;
+    while (newRotation > 180) newRotation -= 360;
+    while (newRotation < -180) newRotation += 360;
+    
+    const snapAngles = [0, 45, 90, 135, 180, -45, -90, -135, -180];
+    for (const snap of snapAngles) {
+        if (Math.abs(newRotation - snap) < 3) {
+            newRotation = snap;
+            break;
         }
     }
+    
+    data.rotation = Math.round(newRotation);
+    updateTextElement(data);
 }
 
 function stopResize() {
     isResizing = false;
     dragData = null;
-    document.removeEventListener('pointermove', onResize);
+    document.removeEventListener('pointermove', onWidthResize);
+    document.removeEventListener('pointermove', onHeightResize);
+    document.removeEventListener('pointermove', onScaleResize);
+    document.removeEventListener('pointermove', onRotate);
     document.removeEventListener('pointerup', stopResize);
     document.removeEventListener('pointercancel', stopResize);
     saveTextLayers();
@@ -748,7 +1137,7 @@ function updateTextPositionsFromPercent() {
     textLayers.forEach(data => updateTextElement(data));
 }
 
-// ==================== RECORDING ====================
+// ==================== RECORDING (giữ nguyên) ====================
 function getSupportedMimeType() {
     const types = [
         'video/webm;codecs=vp9,opus',
@@ -781,7 +1170,6 @@ async function startRecording() {
         return;
     }
     
-    // Thoát text editing mode nếu đang mở
     if (isTextEditingMode) {
         exitTextEditingMode();
     }
@@ -794,8 +1182,6 @@ async function startRecording() {
     
     try {
         recordedChunks = [];
-        
-        // Chuẩn bị stream ghi hình (anti-mirror nếu cần)
         outputStream = await prepareRecordingStream();
         if (!outputStream) {
             outputStream = mediaStream;
@@ -856,13 +1242,11 @@ async function prepareRecordingStream() {
         
         return newStream;
     }
-    
     return mediaStream;
 }
 
 function drawMirroredFrame() {
     if (!canvasCtx || !canvasOutput || !videoPreview) return;
-    
     canvasCtx.save();
     canvasCtx.translate(canvasOutput.width, 0);
     canvasCtx.scale(-1, 1);
@@ -875,14 +1259,12 @@ function cleanupRecordingResources() {
         cancelAnimationFrame(canvasAnimationFrame);
         canvasAnimationFrame = null;
     }
-    
     if (canvasOutput) {
         const stream = canvasOutput.captureStream();
         stream.getTracks().forEach(track => track.stop());
         canvasOutput = null;
         canvasCtx = null;
     }
-    
     if (outputStream && outputStream !== mediaStream) {
         outputStream.getTracks().forEach(track => track.stop());
     }
@@ -989,7 +1371,6 @@ function setTheme(theme) {
 // ==================== FULLSCREEN ====================
 function toggleFullscreen() {
     if (!document.fullscreenElement) {
-        // Thoát text editing nếu đang mở
         if (isTextEditingMode) {
             exitTextEditingMode();
         }
@@ -1068,7 +1449,6 @@ function saveTextLayers() {
 }
 
 function loadSettings() {
-    // Theme
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme) {
         setTheme(savedTheme);
@@ -1078,20 +1458,17 @@ function loadSettings() {
         setTheme('dark');
     }
     
-    // Anti-Mirror
     const savedAntiMirror = localStorage.getItem('antiMirror');
     if (savedAntiMirror !== null) {
         antiMirrorEnabled = savedAntiMirror === 'true';
         antiMirrorCheckbox.checked = antiMirrorEnabled;
     }
     
-    // Aspect ratio
     const savedAspectRatio = localStorage.getItem('aspectRatio');
     if (savedAspectRatio) {
         setAspectRatio(savedAspectRatio);
     }
     
-    // Text layers
     const savedTextLayers = localStorage.getItem('textLayers');
     if (savedTextLayers) {
         try {
