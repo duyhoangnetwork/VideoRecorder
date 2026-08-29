@@ -80,9 +80,11 @@ const textEditOverlayLayer = document.getElementById('textEditOverlayLayer');
 const editOpacityRange = document.getElementById('editOpacityRange');
 const editOpacityValue = document.getElementById('editOpacityValue');
 const editDeleteTextBtn = document.getElementById('editDeleteTextBtn');
-
-// Hidden text editor
-const hiddenTextEditor = document.getElementById('hiddenTextEditor');
+const textEditTitle = document.getElementById('textEditTitle');
+const opacityGroup = document.getElementById('opacityGroup');
+const textareaGroup = document.getElementById('textareaGroup');
+const editTextarea = document.getElementById('editTextarea');
+const pasteTextBtn = document.getElementById('pasteTextBtn');
 
 // ==================== INIT ====================
 document.addEventListener('DOMContentLoaded', () => {
@@ -111,7 +113,6 @@ function setupEventListeners() {
     addTextBtn.addEventListener('click', () => {
         addText('Văn bản mới');
         enterTextEditingMode();
-        // Không tự động focus, chỉ chọn text
     });
     
     // Text editing overlay events
@@ -148,6 +149,12 @@ function setupEventListeners() {
         }
     });
     
+    // Nút Dán
+    pasteTextBtn.addEventListener('click', handlePaste);
+    
+    // Textarea input
+    editTextarea.addEventListener('input', handleTextareaInput);
+    
     startRecordBtn.addEventListener('click', startRecording);
     pauseRecordBtn.addEventListener('click', pauseRecording);
     resumeRecordBtn.addEventListener('click', resumeRecording);
@@ -181,7 +188,6 @@ function handleVisualViewportResize() {
         const viewport = window.visualViewport;
         const textEditOverlayEl = document.getElementById('textEditOverlay');
         if (textEditOverlayEl && viewport.height < window.innerHeight) {
-            // Bàn phím mở
             textEditOverlayEl.style.height = viewport.height + 'px';
             textEditOverlayEl.style.position = 'fixed';
             textEditOverlayEl.style.top = '0';
@@ -696,18 +702,29 @@ function startEditText(id) {
     updateTextList();
     saveTextLayers();
     
-    // Đặt giá trị rỗng cho textarea ẩn và focus
-    hiddenTextEditor.value = '';
-    hiddenTextEditor.focus();
+    // Cập nhật UI
+    textEditTitle.textContent = 'Nhập văn bản';
+    opacityGroup.style.display = 'none';
+    textareaGroup.style.display = 'block';
+    editDeleteTextBtn.style.display = 'none';
     
-    // Lắng nghe input
-    hiddenTextEditor.addEventListener('input', handleTextEditorInput);
+    // Thêm class 'editing' cho text overlay để ẩn handles
+    const el = document.getElementById(id);
+    if (el) el.classList.add('editing');
+    if (isTextEditingMode) {
+        const editEl = document.getElementById(`edit-${id}`);
+        if (editEl) editEl.classList.add('editing');
+    }
+    
+    // Đặt giá trị và focus textarea
+    editTextarea.value = '';
+    editTextarea.focus();
 }
 
-function handleTextEditorInput() {
+function handleTextareaInput() {
     const data = getTextData(editingTextId);
     if (data) {
-        data.content = hiddenTextEditor.value;
+        data.content = editTextarea.value;
         updateTextElement(data);
         updateTextList();
         saveTextLayers();
@@ -717,8 +734,27 @@ function handleTextEditorInput() {
 function finishEditText() {
     if (isEditingText) {
         isEditingText = false;
-        hiddenTextEditor.removeEventListener('input', handleTextEditorInput);
-        hiddenTextEditor.blur();
+        // Lấy nội dung cuối cùng từ textarea
+        const data = getTextData(editingTextId);
+        if (data) {
+            data.content = editTextarea.value;
+            updateTextElement(data);
+            updateTextList();
+            saveTextLayers();
+        }
+        // Xóa class 'editing'
+        const el = document.getElementById(editingTextId);
+        if (el) el.classList.remove('editing');
+        if (isTextEditingMode) {
+            const editEl = document.getElementById(`edit-${editingTextId}`);
+            if (editEl) editEl.classList.remove('editing');
+        }
+        // Reset UI
+        textEditTitle.textContent = 'Chỉnh văn bản';
+        opacityGroup.style.display = 'block';
+        textareaGroup.style.display = 'none';
+        editDeleteTextBtn.style.display = 'block';
+        editTextarea.value = '';
         editingTextId = null;
         editingTextBackup = '';
     }
@@ -733,12 +769,37 @@ function cancelEditText() {
             updateTextList();
             saveTextLayers();
         }
-        // Kết thúc edit nhưng giữ text
+        // Xóa class 'editing'
+        const el = document.getElementById(editingTextId);
+        if (el) el.classList.remove('editing');
+        if (isTextEditingMode) {
+            const editEl = document.getElementById(`edit-${editingTextId}`);
+            if (editEl) editEl.classList.remove('editing');
+        }
+        // Reset UI
+        textEditTitle.textContent = 'Chỉnh văn bản';
+        opacityGroup.style.display = 'block';
+        textareaGroup.style.display = 'none';
+        editDeleteTextBtn.style.display = 'block';
+        editTextarea.value = '';
         isEditingText = false;
-        hiddenTextEditor.removeEventListener('input', handleTextEditorInput);
-        hiddenTextEditor.blur();
         editingTextId = null;
         editingTextBackup = '';
+    }
+}
+
+async function handlePaste() {
+    if (!isEditingText || !editingTextId) return;
+    try {
+        const text = await navigator.clipboard.readText();
+        editTextarea.value += text;
+        // Kích hoạt sự kiện input
+        handleTextareaInput();
+        // Đặt con trỏ cuối
+        editTextarea.focus();
+        editTextarea.setSelectionRange(editTextarea.value.length, editTextarea.value.length);
+    } catch (err) {
+        showToast('Không thể truy cập nội dung đã copy. Hãy cho phép quyền Clipboard hoặc sử dụng Ctrl + V.');
     }
 }
 
@@ -863,6 +924,12 @@ function exitTextEditingMode() {
     
     textEditOverlayLayer.innerHTML = '';
     textEditCameraPreview.srcObject = null;
+    
+    // Đảm bảo trạng thái edit kết thúc
+    if (isEditingText) {
+        // Nếu đang edit mà thoát, không lưu nội dung mới
+        cancelEditText();
+    }
 }
 
 function syncTextEditUI() {
