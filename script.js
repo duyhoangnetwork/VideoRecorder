@@ -25,6 +25,12 @@ let isDragging = false;
 let isResizing = false;
 let dragData = null;
 let currentTheme = 'dark';
+let antiMirrorEnabled = true; // Mặc định bật chống lật
+let currentFacingMode = 'user'; // 'user' cho camera trước, 'environment' cho sau, hoặc 'unknown'
+let outputStream = null; // Stream dùng cho MediaRecorder (có thể là canvas stream)
+let canvasAnimationFrame = null;
+let canvasOutput = null;
+let canvasCtx = null;
 
 // ==================== DOM ====================
 const videoPreview = document.getElementById('cameraPreview');
@@ -33,6 +39,7 @@ const cameraStage = document.getElementById('cameraStage');
 const cameraWrapper = document.getElementById('cameraWrapper');
 const cameraSelect = document.getElementById('cameraSelect');
 const micSelect = document.getElementById('micSelect');
+const antiMirrorCheckbox = document.getElementById('antiMirrorCheckbox');
 const permissionOverlay = document.getElementById('permissionOverlay');
 const permissionBtn = document.getElementById('permissionBtn');
 const permissionHint = document.getElementById('permissionHint');
@@ -85,6 +92,15 @@ function setupEventListeners() {
     
     cameraSelect.addEventListener('change', switchCamera);
     micSelect.addEventListener('change', switchMicrophone);
+    antiMirrorCheckbox.addEventListener('change', (e) => {
+        antiMirrorEnabled = e.target.checked;
+        localStorage.setItem('antiMirror', antiMirrorEnabled);
+        // Cập nhật preview mirror nếu cần
+        updatePreviewMirror();
+        if (currentState === APP_STATE.CAMERA_READY) {
+            showToast(antiMirrorEnabled ? 'Đã bật chống lật video' : 'Đã tắt chống lật video');
+        }
+    });
     
     document.querySelectorAll('.ratio-btn').forEach(btn => {
         btn.addEventListener('click', () => setAspectRatio(btn.dataset.ratio));
@@ -122,7 +138,7 @@ function setupEventListeners() {
     });
 }
 
-// ==================== STAGE SIZE (MOBILE-FIRST) ====================
+// ==================== STAGE SIZE ====================
 function updateStageSize() {
     const container = cameraWrapper;
     const stage = cameraStage;
@@ -153,6 +169,17 @@ function updateStageSize() {
     
     stage.style.width = Math.floor(stageWidth) + 'px';
     stage.style.height = Math.floor(stageHeight) + 'px';
+}
+
+// ==================== PREVIEW MIRROR ====================
+function updatePreviewMirror() {
+    // Chỉ mirror preview nếu camera trước và antiMirrorEnabled
+    // Vì preview nên hiển thị gương để dễ tự quay, nhưng video lưu sẽ không bị lật
+    if (currentFacingMode === 'user') {
+        videoPreview.classList.add('mirrored');
+    } else {
+        videoPreview.classList.remove('mirrored');
+    }
 }
 
 // ==================== CAMERA & MIC ====================
@@ -223,6 +250,15 @@ async function initCamera() {
         
         mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
         videoPreview.srcObject = mediaStream;
+        
+        // Lấy facingMode từ track settings
+        const videoTrack = mediaStream.getVideoTracks()[0];
+        if (videoTrack) {
+            const settings = videoTrack.getSettings();
+            currentFacingMode = settings.facingMode || 'unknown';
+        }
+        
+        updatePreviewMirror();
         currentState = APP_STATE.CAMERA_READY;
         updateUI();
         showToast('Camera đã sẵn sàng');
@@ -290,6 +326,14 @@ async function switchCamera() {
         };
         mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
         videoPreview.srcObject = mediaStream;
+        
+        const videoTrack = mediaStream.getVideoTracks()[0];
+        if (videoTrack) {
+            const settings = videoTrack.getSettings();
+            currentFacingMode = settings.facingMode || 'unknown';
+        }
+        
+        updatePreviewMirror();
         if (currentState === APP_STATE.RECORDED) {
             currentState = APP_STATE.CAMERA_READY;
             updateUI();
@@ -423,7 +467,6 @@ function selectText(id) {
             opacityRange.value = data.opacity * 100;
             opacityValue.textContent = Math.round(data.opacity * 100);
             
-            // Sync quick tools
             quickFontSizeRange.value = data.fontSize;
             quickSizeValue.textContent = data.fontSize;
             quickOpacityRange.value = data.opacity * 100;
@@ -459,7 +502,6 @@ function updateSelectedTextStyle() {
     data.opacity = parseInt(opacityRange.value) / 100;
     opacityValue.textContent = parseInt(opacityRange.value);
     
-    // Sync quick tools
     quickFontSizeRange.value = data.fontSize;
     quickSizeValue.textContent = data.fontSize;
     quickOpacityRange.value = data.opacity * 100;
@@ -682,7 +724,14 @@ async function startRecording() {
     
     try {
         recordedChunks = [];
-        mediaRecorder = new MediaRecorder(mediaStream, { mimeType: mimeType });
+        
+        // Chuẩn bị stream ghi hình (có thể xử lý anti-mirror)
+        outputStream = await prepareRecordingStream();
+        if (!outputStream) {
+            outputStream = mediaStream; // fallback
+        }
+        
+        mediaRecorder = new MediaRecorder(outputStream, { mimeType: mimeType });
         
         mediaRecorder.ondataavailable = (event) => {
             if (event.data && event.data.size > 0) {
@@ -694,6 +743,7 @@ async function startRecording() {
             recordedBlob = new Blob(recordedChunks, { type: mimeType });
             recordedUrl = URL.createObjectURL(recordedBlob);
             currentState = APP_STATE.RECORDED;
+            cleanupRecordingResources();
             updateUI();
             showToast('Video đã quay xong');
         };
@@ -707,6 +757,78 @@ async function startRecording() {
         console.error('startRecording error:', err);
         showToast('Không thể bắt đầu quay video');
     }
+}
+
+async function prepareRecordingStream() {
+    // Nếu antiMirrorEnabled và camera trước, tạo canvas stream để lật ảnh
+    if (antiMirrorEnabled && currentFacingMode === 'user') {
+        // Tạo canvas ẩn
+        canvasOutput = document.createElement('canvas');
+        canvasCtx = canvasOutput.getContext('2d');
+        
+        const videoTrack = mediaStream.getVideoTracks()[0];
+        const settings = videoTrack.getSettings();
+        canvasOutput.width = settings.width || 1280;
+        canvasOutput.height = settings.height || 720;
+        
+        // Vẽ frame đầu tiên
+        drawMirroredFrame();
+        
+        // Tạo stream từ canvas
+        const canvasStream = canvasOutput.captureStream(30);
+        const canvasVideoTrack = canvasStream.getVideoTracks()[0];
+        
+        // Kết hợp với audio track từ stream gốc
+        const audioTracks = mediaStream.getAudioTracks();
+        const newStream = new MediaStream([canvasVideoTrack, ...audioTracks]);
+        
+        // Bắt đầu vẽ liên tục
+        const drawLoop = () => {
+            if (currentState === APP_STATE.RECORDING || currentState === APP_STATE.PAUSED) {
+                drawMirroredFrame();
+                canvasAnimationFrame = requestAnimationFrame(drawLoop);
+            }
+        };
+        canvasAnimationFrame = requestAnimationFrame(drawLoop);
+        
+        return newStream;
+    }
+    
+    // Ngược lại dùng stream gốc
+    return mediaStream;
+}
+
+function drawMirroredFrame() {
+    if (!canvasCtx || !canvasOutput || !videoPreview) return;
+    
+    canvasCtx.save();
+    // Lật ngang: vẽ hình ảnh từ video vào canvas với scaleX(-1)
+    canvasCtx.translate(canvasOutput.width, 0);
+    canvasCtx.scale(-1, 1);
+    canvasCtx.drawImage(videoPreview, 0, 0, canvasOutput.width, canvasOutput.height);
+    canvasCtx.restore();
+}
+
+function cleanupRecordingResources() {
+    // Dừng animation frame
+    if (canvasAnimationFrame) {
+        cancelAnimationFrame(canvasAnimationFrame);
+        canvasAnimationFrame = null;
+    }
+    
+    // Dừng canvas stream tracks
+    if (canvasOutput) {
+        const stream = canvasOutput.captureStream();
+        stream.getTracks().forEach(track => track.stop());
+        canvasOutput = null;
+        canvasCtx = null;
+    }
+    
+    // Dừng outputStream nếu là stream tổng hợp
+    if (outputStream && outputStream !== mediaStream) {
+        outputStream.getTracks().forEach(track => track.stop());
+    }
+    outputStream = null;
 }
 
 function pauseRecording() {
@@ -729,10 +851,14 @@ function stopRecording() {
     if (currentState !== APP_STATE.RECORDING && currentState !== APP_STATE.PAUSED) return;
     mediaRecorder.stop();
     stopTimer();
-    mediaStream.getTracks().forEach(track => track.stop());
-    mediaStream = null;
-    videoPreview.srcObject = null;
+    // Dừng camera stream sau khi stop
+    if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+        videoPreview.srcObject = null;
+    }
     currentState = APP_STATE.RECORDED;
+    // Lưu ý: cleanupRecordingResources sẽ được gọi trong onstop
     updateUI();
 }
 
@@ -861,6 +987,7 @@ function updateUI() {
     
     cameraSelect.disabled = isRecording || isPaused;
     micSelect.disabled = isRecording || isPaused;
+    antiMirrorCheckbox.disabled = isRecording || isPaused;
 }
 
 // ==================== TOAST ====================
@@ -891,6 +1018,13 @@ function loadSettings() {
         setTheme('light');
     } else {
         setTheme('dark');
+    }
+    
+    // Anti-Mirror
+    const savedAntiMirror = localStorage.getItem('antiMirror');
+    if (savedAntiMirror !== null) {
+        antiMirrorEnabled = savedAntiMirror === 'true';
+        antiMirrorCheckbox.checked = antiMirrorEnabled;
     }
     
     // Aspect ratio
@@ -937,7 +1071,6 @@ const resizeObserver = new ResizeObserver(() => {
 resizeObserver.observe(overlayLayer);
 resizeObserver.observe(cameraWrapper);
 
-// Đảm bảo stage size đúng khi fullscreen thay đổi
 document.addEventListener('fullscreenchange', () => {
     setTimeout(updateStageSize, 100);
 });
