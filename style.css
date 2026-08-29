@@ -379,6 +379,11 @@ body {
     left: -44px;
 }
 
+/* Ẩn tất cả handle khi đang edit */
+.text-overlay.editing .text-handle {
+    display: none;
+}
+
 .guide {
     position: absolute;
     z-index: 40;
@@ -703,24 +708,22 @@ input[type="range"]::-webkit-slider-thumb {
     flex-shrink: 0;
 }
 
-.text-edit-tools .form-group {
-    margin-bottom: 10px;
+.edit-textarea {
+    width: 100%;
+    padding: 10px;
+    background: var(--panel-solid);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 16px;
+    outline: none;
+    resize: vertical;
+    min-height: 60px;
+    caret-color: var(--accent);
 }
 
-/* Hidden text editor */
-.hidden-text-editor {
-    position: fixed;
-    left: -9999px;
-    top: 0;
-    width: 1px;
-    height: 1px;
-    opacity: 0;
-    pointer-events: none;
-    border: none;
-    padding: 0;
-    margin: 0;
-    resize: none;
-    z-index: 9999;
+.edit-textarea:focus {
+    border-color: var(--accent);
 }
 
 /* Permission overlay */
