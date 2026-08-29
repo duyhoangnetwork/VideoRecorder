@@ -25,12 +25,15 @@ let isDragging = false;
 let isResizing = false;
 let dragData = null;
 let currentTheme = 'dark';
-let antiMirrorEnabled = true; // Mặc định bật chống lật
-let currentFacingMode = 'user'; // 'user' cho camera trước, 'environment' cho sau, hoặc 'unknown'
-let outputStream = null; // Stream dùng cho MediaRecorder (có thể là canvas stream)
+let antiMirrorEnabled = true;
+let currentFacingMode = 'unknown';
+let outputStream = null;
 let canvasAnimationFrame = null;
 let canvasOutput = null;
 let canvasCtx = null;
+let isTextEditingMode = false;
+let textEditStream = null;
+let textEditVideoTrack = null;
 
 // ==================== DOM ====================
 const videoPreview = document.getElementById('cameraPreview');
@@ -45,19 +48,6 @@ const permissionBtn = document.getElementById('permissionBtn');
 const permissionHint = document.getElementById('permissionHint');
 const addTextBtn = document.getElementById('addTextBtn');
 const textList = document.getElementById('textList');
-const textEditPanel = document.getElementById('textEditPanel');
-const textContentInput = document.getElementById('textContentInput');
-const fontSizeRange = document.getElementById('fontSizeRange');
-const sizeValue = document.getElementById('sizeValue');
-const opacityRange = document.getElementById('opacityRange');
-const opacityValue = document.getElementById('opacityValue');
-const deleteTextBtn = document.getElementById('deleteTextBtn');
-const quickTextTools = document.getElementById('quickTextTools');
-const quickFontSizeRange = document.getElementById('quickFontSizeRange');
-const quickSizeValue = document.getElementById('quickSizeValue');
-const quickOpacityRange = document.getElementById('quickOpacityRange');
-const quickOpacityValue = document.getElementById('quickOpacityValue');
-const quickDeleteTextBtn = document.getElementById('quickDeleteTextBtn');
 const videoNameInput = document.getElementById('videoNameInput');
 const startRecordBtn = document.getElementById('startRecordBtn');
 const pauseRecordBtn = document.getElementById('pauseRecordBtn');
@@ -78,6 +68,20 @@ const toast = document.getElementById('toast');
 const verticalGuide = document.getElementById('verticalGuide');
 const horizontalGuide = document.getElementById('horizontalGuide');
 
+// Text editing overlay
+const textEditOverlay = document.getElementById('textEditOverlay');
+const cancelTextEditBtn = document.getElementById('cancelTextEditBtn');
+const doneTextEditBtn = document.getElementById('doneTextEditBtn');
+const textEditCameraWrapper = document.getElementById('textEditCameraWrapper');
+const textEditCameraStage = document.getElementById('textEditCameraStage');
+const textEditCameraPreview = document.getElementById('textEditCameraPreview');
+const textEditOverlayLayer = document.getElementById('textEditOverlayLayer');
+const editFontSizeRange = document.getElementById('editFontSizeRange');
+const editSizeValue = document.getElementById('editSizeValue');
+const editOpacityRange = document.getElementById('editOpacityRange');
+const editOpacityValue = document.getElementById('editOpacityValue');
+const editDeleteTextBtn = document.getElementById('editDeleteTextBtn');
+
 // ==================== INIT ====================
 document.addEventListener('DOMContentLoaded', () => {
     loadSettings();
@@ -95,32 +99,49 @@ function setupEventListeners() {
     antiMirrorCheckbox.addEventListener('change', (e) => {
         antiMirrorEnabled = e.target.checked;
         localStorage.setItem('antiMirror', antiMirrorEnabled);
-        // Cập nhật preview mirror nếu cần
         updatePreviewMirror();
-        if (currentState === APP_STATE.CAMERA_READY) {
-            showToast(antiMirrorEnabled ? 'Đã bật chống lật video' : 'Đã tắt chống lật video');
-        }
     });
     
     document.querySelectorAll('.ratio-btn').forEach(btn => {
         btn.addEventListener('click', () => setAspectRatio(btn.dataset.ratio));
     });
     
-    addTextBtn.addEventListener('click', () => addText('Văn bản mới'));
-    textContentInput.addEventListener('input', updateSelectedTextContent);
-    fontSizeRange.addEventListener('input', updateSelectedTextStyle);
-    opacityRange.addEventListener('input', updateSelectedTextStyle);
-    deleteTextBtn.addEventListener('click', deleteSelectedText);
+    addTextBtn.addEventListener('click', () => {
+        addText('Văn bản mới');
+        enterTextEditingMode();
+    });
     
-    quickFontSizeRange.addEventListener('input', (e) => {
-        fontSizeRange.value = e.target.value;
-        updateSelectedTextStyle();
+    // Text editing overlay events
+    cancelTextEditBtn.addEventListener('click', exitTextEditingMode);
+    doneTextEditBtn.addEventListener('click', exitTextEditingMode);
+    editDeleteTextBtn.addEventListener('click', () => {
+        if (selectedTextId) {
+            deleteSelectedText();
+            if (textLayers.length === 0) {
+                exitTextEditingMode();
+            }
+        }
     });
-    quickOpacityRange.addEventListener('input', (e) => {
-        opacityRange.value = e.target.value;
-        updateSelectedTextStyle();
+    editFontSizeRange.addEventListener('input', (e) => {
+        if (!selectedTextId) return;
+        const data = getTextData(selectedTextId);
+        if (data) {
+            data.fontSize = parseInt(e.target.value);
+            editSizeValue.textContent = e.target.value;
+            updateTextElement(data);
+            saveTextLayers();
+        }
     });
-    quickDeleteTextBtn.addEventListener('click', deleteSelectedText);
+    editOpacityRange.addEventListener('input', (e) => {
+        if (!selectedTextId) return;
+        const data = getTextData(selectedTextId);
+        if (data) {
+            data.opacity = parseInt(e.target.value) / 100;
+            editOpacityValue.textContent = e.target.value;
+            updateTextElement(data);
+            saveTextLayers();
+        }
+    });
     
     startRecordBtn.addEventListener('click', startRecording);
     pauseRecordBtn.addEventListener('click', pauseRecording);
@@ -140,45 +161,34 @@ function setupEventListeners() {
 
 // ==================== STAGE SIZE ====================
 function updateStageSize() {
-    const container = cameraWrapper;
     const stage = cameraStage;
-    if (!container || !stage) return;
+    if (!stage) return;
     
-    const containerRect = container.getBoundingClientRect();
-    const availableWidth = containerRect.width;
-    const availableHeight = containerRect.height;
-    
-    if (availableWidth <= 0 || availableHeight <= 0) return;
-    
-    let ratio;
-    switch (currentAspectRatio) {
-        case '9:16': ratio = 9/16; break;
-        case '16:9': ratio = 16/9; break;
-        case '1:1': ratio = 1; break;
-        case '4:5': ratio = 4/5; break;
-        default: ratio = 16/9;
+    stage.style.aspectRatio = getRatioValue(currentAspectRatio);
+}
+
+function getRatioValue(ratio) {
+    switch (ratio) {
+        case '9:16': return '9/16';
+        case '16:9': return '16/9';
+        case '1:1': return '1/1';
+        case '4:5': return '4/5';
+        default: return '16/9';
     }
-    
-    let stageWidth = availableWidth;
-    let stageHeight = stageWidth / ratio;
-    
-    if (stageHeight > availableHeight) {
-        stageHeight = availableHeight;
-        stageWidth = stageHeight * ratio;
-    }
-    
-    stage.style.width = Math.floor(stageWidth) + 'px';
-    stage.style.height = Math.floor(stageHeight) + 'px';
 }
 
 // ==================== PREVIEW MIRROR ====================
 function updatePreviewMirror() {
-    // Chỉ mirror preview nếu camera trước và antiMirrorEnabled
-    // Vì preview nên hiển thị gương để dễ tự quay, nhưng video lưu sẽ không bị lật
     if (currentFacingMode === 'user') {
         videoPreview.classList.add('mirrored');
+        if (textEditCameraPreview) {
+            textEditCameraPreview.classList.add('mirrored');
+        }
     } else {
         videoPreview.classList.remove('mirrored');
+        if (textEditCameraPreview) {
+            textEditCameraPreview.classList.remove('mirrored');
+        }
     }
 }
 
@@ -251,7 +261,6 @@ async function initCamera() {
         mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
         videoPreview.srcObject = mediaStream;
         
-        // Lấy facingMode từ track settings
         const videoTrack = mediaStream.getVideoTracks()[0];
         if (videoTrack) {
             const settings = videoTrack.getSettings();
@@ -380,6 +389,12 @@ function setAspectRatio(ratio) {
     
     localStorage.setItem('aspectRatio', ratio);
     updateStageSize();
+    
+    // Cập nhật cả text edit stage nếu đang mở
+    if (textEditCameraStage) {
+        textEditCameraStage.style.aspectRatio = getRatioValue(ratio);
+    }
+    
     updateTextPositionsFromPercent();
 }
 
@@ -430,23 +445,59 @@ function createTextElement(data) {
     el.addEventListener('dblclick', (e) => {
         e.stopPropagation();
         selectText(data.id);
-        textContentInput.focus();
-        textContentInput.select();
+        enterTextEditingMode();
     });
     
     resizeHandle.addEventListener('pointerdown', (e) => startResize(e, data.id));
     
     overlayLayer.appendChild(el);
+    
+    // Nếu đang trong text editing mode, tạo bản sao cho overlay của text edit
+    if (isTextEditingMode) {
+        createTextEditElement(data);
+    }
+}
+
+function createTextEditElement(data) {
+    const el = document.createElement('div');
+    el.className = 'text-overlay';
+    el.id = `edit-${data.id}`;
+    el.textContent = data.content;
+    el.style.position = 'absolute';
+    el.style.left = `${data.xPercent}%`;
+    el.style.top = `${data.yPercent}%`;
+    el.style.transform = `translate(-50%, -50%)`;
+    el.style.fontSize = `${data.fontSize}px`;
+    el.style.opacity = data.opacity;
+    el.style.fontWeight = 'bold';
+    el.style.textShadow = '0 0 4px rgba(0,0,0,0.5)';
+    el.style.padding = '4px 8px';
+    el.style.cursor = 'move';
+    el.style.userSelect = 'none';
+    el.style.zIndex = '20';
+    el.style.touchAction = 'none';
+    el.dataset.textId = data.id;
+    
+    textEditOverlayLayer.appendChild(el);
 }
 
 function updateTextElement(data) {
     const el = document.getElementById(data.id);
-    if (!el) return;
-    el.textContent = data.content;
-    el.style.left = `${data.xPercent}%`;
-    el.style.top = `${data.yPercent}%`;
-    el.style.fontSize = `${data.fontSize}px`;
-    el.style.opacity = data.opacity;
+    if (el) {
+        el.textContent = data.content;
+        el.style.left = `${data.xPercent}%`;
+        el.style.top = `${data.yPercent}%`;
+        el.style.fontSize = `${data.fontSize}px`;
+        el.style.opacity = data.opacity;
+    }
+    const editEl = document.getElementById(`edit-${data.id}`);
+    if (editEl) {
+        editEl.textContent = data.content;
+        editEl.style.left = `${data.xPercent}%`;
+        editEl.style.top = `${data.yPercent}%`;
+        editEl.style.fontSize = `${data.fontSize}px`;
+        editEl.style.opacity = data.opacity;
+    }
 }
 
 function selectText(id) {
@@ -460,18 +511,10 @@ function selectText(id) {
         el.classList.add('selected');
         const data = getTextData(id);
         if (data) {
-            textEditPanel.classList.remove('hidden');
-            textContentInput.value = data.content;
-            fontSizeRange.value = data.fontSize;
-            sizeValue.textContent = data.fontSize;
-            opacityRange.value = data.opacity * 100;
-            opacityValue.textContent = Math.round(data.opacity * 100);
-            
-            quickFontSizeRange.value = data.fontSize;
-            quickSizeValue.textContent = data.fontSize;
-            quickOpacityRange.value = data.opacity * 100;
-            quickOpacityValue.textContent = Math.round(data.opacity * 100);
-            quickTextTools.classList.remove('hidden');
+            editFontSizeRange.value = data.fontSize;
+            editSizeValue.textContent = data.fontSize;
+            editOpacityRange.value = data.opacity * 100;
+            editOpacityValue.textContent = Math.round(data.opacity * 100);
         }
     }
     updateTextList();
@@ -481,44 +524,14 @@ function getTextData(id) {
     return textLayers.find(t => t.id === id);
 }
 
-function updateSelectedTextContent() {
-    if (!selectedTextId) return;
-    const data = getTextData(selectedTextId);
-    if (data) {
-        data.content = textContentInput.value;
-        updateTextElement(data);
-        updateTextList();
-        saveTextLayers();
-    }
-}
-
-function updateSelectedTextStyle() {
-    if (!selectedTextId) return;
-    const data = getTextData(selectedTextId);
-    if (!data) return;
-    
-    data.fontSize = parseInt(fontSizeRange.value);
-    sizeValue.textContent = data.fontSize;
-    data.opacity = parseInt(opacityRange.value) / 100;
-    opacityValue.textContent = parseInt(opacityRange.value);
-    
-    quickFontSizeRange.value = data.fontSize;
-    quickSizeValue.textContent = data.fontSize;
-    quickOpacityRange.value = data.opacity * 100;
-    quickOpacityValue.textContent = Math.round(data.opacity * 100);
-    
-    updateTextElement(data);
-    saveTextLayers();
-}
-
 function deleteSelectedText() {
     if (!selectedTextId) return;
     const el = document.getElementById(selectedTextId);
     if (el) el.remove();
+    const editEl = document.getElementById(`edit-${selectedTextId}`);
+    if (editEl) editEl.remove();
     textLayers = textLayers.filter(t => t.id !== selectedTextId);
     selectedTextId = null;
-    textEditPanel.classList.add('hidden');
-    quickTextTools.classList.add('hidden');
     updateTextList();
     saveTextLayers();
 }
@@ -530,7 +543,10 @@ function updateTextList() {
         item.className = 'text-list-item';
         if (layer.id === selectedTextId) item.classList.add('active');
         item.innerHTML = `<span class="text-preview">${layer.content || 'Văn bản'}</span>`;
-        item.addEventListener('click', () => selectText(layer.id));
+        item.addEventListener('click', () => {
+            selectText(layer.id);
+            enterTextEditingMode();
+        });
         
         const visibilitySpan = document.createElement('span');
         visibilitySpan.className = 'text-visibility';
@@ -548,6 +564,51 @@ function updateTextList() {
     });
 }
 
+// ==================== TEXT EDITING MODE ====================
+function enterTextEditingMode() {
+    if (textLayers.length === 0) return;
+    isTextEditingMode = true;
+    
+    // Dừng camera chính
+    if (videoPreview.srcObject) {
+        // Lưu stream để dùng lại
+    }
+    
+    // Tạo bản sao text elements vào overlay của text edit
+    textEditOverlayLayer.innerHTML = '';
+    textLayers.forEach(data => {
+        createTextEditElement(data);
+    });
+    
+    // Set camera preview cho text edit
+    textEditCameraPreview.srcObject = videoPreview.srcObject;
+    textEditCameraStage.style.aspectRatio = getRatioValue(currentAspectRatio);
+    
+    // Cập nhật tool values
+    if (selectedTextId) {
+        const data = getTextData(selectedTextId);
+        if (data) {
+            editFontSizeRange.value = data.fontSize;
+            editSizeValue.textContent = data.fontSize;
+            editOpacityRange.value = data.opacity * 100;
+            editOpacityValue.textContent = Math.round(data.opacity * 100);
+        }
+    }
+    
+    textEditOverlay.classList.remove('hidden');
+    document.body.style.overflow = 'hidden';
+}
+
+function exitTextEditingMode() {
+    isTextEditingMode = false;
+    textEditOverlay.classList.add('hidden');
+    document.body.style.overflow = '';
+    
+    // Xóa bản sao text elements
+    textEditOverlayLayer.innerHTML = '';
+    textEditCameraPreview.srcObject = null;
+}
+
 // ==================== DRAG & RESIZE ====================
 function startDrag(e, id) {
     if (e.target.classList.contains('resize-handle')) return;
@@ -556,7 +617,8 @@ function startDrag(e, id) {
     if (!data) return;
     selectText(id);
     
-    const rect = overlayLayer.getBoundingClientRect();
+    const overlay = isTextEditingMode ? textEditOverlayLayer : overlayLayer;
+    const rect = overlay.getBoundingClientRect();
     dragData = {
         id: id,
         startX: e.clientX,
@@ -570,6 +632,7 @@ function startDrag(e, id) {
     
     document.addEventListener('pointermove', onDrag);
     document.addEventListener('pointerup', stopDrag);
+    document.addEventListener('pointercancel', stopDrag);
 }
 
 function onDrag(e) {
@@ -597,6 +660,7 @@ function stopDrag() {
     hideGuides();
     document.removeEventListener('pointermove', onDrag);
     document.removeEventListener('pointerup', stopDrag);
+    document.removeEventListener('pointercancel', stopDrag);
     saveTextLayers();
 }
 
@@ -607,7 +671,8 @@ function startResize(e, id) {
     const data = getTextData(id);
     if (!data) return;
     
-    const rect = overlayLayer.getBoundingClientRect();
+    const overlay = isTextEditingMode ? textEditOverlayLayer : overlayLayer;
+    const rect = overlay.getBoundingClientRect();
     dragData = {
         id: id,
         startX: e.clientX,
@@ -620,6 +685,7 @@ function startResize(e, id) {
     
     document.addEventListener('pointermove', onResize);
     document.addEventListener('pointerup', stopResize);
+    document.addEventListener('pointercancel', stopResize);
 }
 
 function onResize(e) {
@@ -637,10 +703,8 @@ function onResize(e) {
         data.fontSize = newSize;
         updateTextElement(data);
         if (selectedTextId === data.id) {
-            fontSizeRange.value = newSize;
-            sizeValue.textContent = newSize;
-            quickFontSizeRange.value = newSize;
-            quickSizeValue.textContent = newSize;
+            editFontSizeRange.value = newSize;
+            editSizeValue.textContent = newSize;
         }
     }
 }
@@ -650,6 +714,7 @@ function stopResize() {
     dragData = null;
     document.removeEventListener('pointermove', onResize);
     document.removeEventListener('pointerup', stopResize);
+    document.removeEventListener('pointercancel', stopResize);
     saveTextLayers();
 }
 
@@ -716,6 +781,11 @@ async function startRecording() {
         return;
     }
     
+    // Thoát text editing mode nếu đang mở
+    if (isTextEditingMode) {
+        exitTextEditingMode();
+    }
+    
     const mimeType = getSupportedMimeType();
     if (!mimeType || !window.MediaRecorder) {
         showToast('Trình duyệt không hỗ trợ quay video. Vui lòng sử dụng Chrome hoặc Edge phiên bản mới.');
@@ -725,10 +795,10 @@ async function startRecording() {
     try {
         recordedChunks = [];
         
-        // Chuẩn bị stream ghi hình (có thể xử lý anti-mirror)
+        // Chuẩn bị stream ghi hình (anti-mirror nếu cần)
         outputStream = await prepareRecordingStream();
         if (!outputStream) {
-            outputStream = mediaStream; // fallback
+            outputStream = mediaStream;
         }
         
         mediaRecorder = new MediaRecorder(outputStream, { mimeType: mimeType });
@@ -760,9 +830,7 @@ async function startRecording() {
 }
 
 async function prepareRecordingStream() {
-    // Nếu antiMirrorEnabled và camera trước, tạo canvas stream để lật ảnh
     if (antiMirrorEnabled && currentFacingMode === 'user') {
-        // Tạo canvas ẩn
         canvasOutput = document.createElement('canvas');
         canvasCtx = canvasOutput.getContext('2d');
         
@@ -771,18 +839,13 @@ async function prepareRecordingStream() {
         canvasOutput.width = settings.width || 1280;
         canvasOutput.height = settings.height || 720;
         
-        // Vẽ frame đầu tiên
         drawMirroredFrame();
         
-        // Tạo stream từ canvas
         const canvasStream = canvasOutput.captureStream(30);
         const canvasVideoTrack = canvasStream.getVideoTracks()[0];
-        
-        // Kết hợp với audio track từ stream gốc
         const audioTracks = mediaStream.getAudioTracks();
         const newStream = new MediaStream([canvasVideoTrack, ...audioTracks]);
         
-        // Bắt đầu vẽ liên tục
         const drawLoop = () => {
             if (currentState === APP_STATE.RECORDING || currentState === APP_STATE.PAUSED) {
                 drawMirroredFrame();
@@ -794,7 +857,6 @@ async function prepareRecordingStream() {
         return newStream;
     }
     
-    // Ngược lại dùng stream gốc
     return mediaStream;
 }
 
@@ -802,7 +864,6 @@ function drawMirroredFrame() {
     if (!canvasCtx || !canvasOutput || !videoPreview) return;
     
     canvasCtx.save();
-    // Lật ngang: vẽ hình ảnh từ video vào canvas với scaleX(-1)
     canvasCtx.translate(canvasOutput.width, 0);
     canvasCtx.scale(-1, 1);
     canvasCtx.drawImage(videoPreview, 0, 0, canvasOutput.width, canvasOutput.height);
@@ -810,13 +871,11 @@ function drawMirroredFrame() {
 }
 
 function cleanupRecordingResources() {
-    // Dừng animation frame
     if (canvasAnimationFrame) {
         cancelAnimationFrame(canvasAnimationFrame);
         canvasAnimationFrame = null;
     }
     
-    // Dừng canvas stream tracks
     if (canvasOutput) {
         const stream = canvasOutput.captureStream();
         stream.getTracks().forEach(track => track.stop());
@@ -824,7 +883,6 @@ function cleanupRecordingResources() {
         canvasCtx = null;
     }
     
-    // Dừng outputStream nếu là stream tổng hợp
     if (outputStream && outputStream !== mediaStream) {
         outputStream.getTracks().forEach(track => track.stop());
     }
@@ -851,14 +909,10 @@ function stopRecording() {
     if (currentState !== APP_STATE.RECORDING && currentState !== APP_STATE.PAUSED) return;
     mediaRecorder.stop();
     stopTimer();
-    // Dừng camera stream sau khi stop
-    if (mediaStream) {
-        mediaStream.getTracks().forEach(track => track.stop());
-        mediaStream = null;
-        videoPreview.srcObject = null;
-    }
+    mediaStream.getTracks().forEach(track => track.stop());
+    mediaStream = null;
+    videoPreview.srcObject = null;
     currentState = APP_STATE.RECORDED;
-    // Lưu ý: cleanupRecordingResources sẽ được gọi trong onstop
     updateUI();
 }
 
@@ -935,6 +989,10 @@ function setTheme(theme) {
 // ==================== FULLSCREEN ====================
 function toggleFullscreen() {
     if (!document.fullscreenElement) {
+        // Thoát text editing nếu đang mở
+        if (isTextEditingMode) {
+            exitTextEditingMode();
+        }
         if (cameraStage.requestFullscreen) {
             cameraStage.requestFullscreen().catch(err => console.error(err));
         }
@@ -1058,6 +1116,11 @@ document.addEventListener('pointerup', () => {
     if (isResizing) stopResize();
 });
 
+document.addEventListener('pointercancel', () => {
+    if (isDragging) stopDrag();
+    if (isResizing) stopResize();
+});
+
 document.addEventListener('contextmenu', (e) => {
     if (e.target.closest('.text-overlay')) {
         e.preventDefault();
@@ -1068,8 +1131,9 @@ const resizeObserver = new ResizeObserver(() => {
     updateStageSize();
     updateTextPositionsFromPercent();
 });
-resizeObserver.observe(overlayLayer);
 resizeObserver.observe(cameraWrapper);
+resizeObserver.observe(overlayLayer);
+resizeObserver.observe(textEditOverlayLayer);
 
 document.addEventListener('fullscreenchange', () => {
     setTimeout(updateStageSize, 100);
