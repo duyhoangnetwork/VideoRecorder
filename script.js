@@ -35,7 +35,6 @@ let isTextEditingMode = false;
 let isEditingText = false;
 let editingTextId = null;
 let editingTextBackup = '';
-let activeTool = null; // 'scale', 'width', 'height', 'rotate', 'edit', 'delete'
 
 // ==================== DOM ====================
 const videoPreview = document.getElementById('cameraPreview');
@@ -74,11 +73,8 @@ const horizontalGuide = document.getElementById('horizontalGuide');
 const textControlsPanel = document.getElementById('textControlsPanel');
 const fontSizeSlider = document.getElementById('fontSizeSlider');
 const fontSizeValue = document.getElementById('fontSizeValue');
-const fontSizeMinusBtn = document.getElementById('fontSizeMinusBtn');
-const fontSizePlusBtn = document.getElementById('fontSizePlusBtn');
 const opacitySlider = document.getElementById('opacitySlider');
 const opacityValueDisplay = document.getElementById('opacityValueDisplay');
-const toolBtns = document.querySelectorAll('.tool-btn');
 
 // Text editing overlay
 const textEditOverlay = document.getElementById('textEditOverlay');
@@ -122,7 +118,7 @@ function setupEventListeners() {
         enterTextEditingMode();
     });
     
-    // Text Controls Panel
+    // Slider controls
     fontSizeSlider.addEventListener('input', (e) => {
         if (!selectedTextId) return;
         const data = getTextData(selectedTextId);
@@ -143,54 +139,6 @@ function setupEventListeners() {
             updateTextElement(data);
             saveTextLayers();
         }
-    });
-    
-    fontSizeMinusBtn.addEventListener('click', () => {
-        if (!selectedTextId) return;
-        const data = getTextData(selectedTextId);
-        if (data) {
-            data.fontSize = Math.max(12, data.fontSize - 2);
-            fontSizeSlider.value = data.fontSize;
-            fontSizeValue.textContent = data.fontSize + 'px';
-            updateTextElement(data);
-            saveTextLayers();
-        }
-    });
-    
-    fontSizePlusBtn.addEventListener('click', () => {
-        if (!selectedTextId) return;
-        const data = getTextData(selectedTextId);
-        if (data) {
-            data.fontSize = Math.min(100, data.fontSize + 2);
-            fontSizeSlider.value = data.fontSize;
-            fontSizeValue.textContent = data.fontSize + 'px';
-            updateTextElement(data);
-            saveTextLayers();
-        }
-    });
-    
-    toolBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            const tool = btn.dataset.tool;
-            if (activeTool === tool) {
-                activeTool = null;
-                btn.classList.remove('active');
-            } else {
-                activeTool = tool;
-                toolBtns.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-            }
-            // Nếu là edit hoặc delete thì thực hiện ngay
-            if (tool === 'edit' && selectedTextId) {
-                startEditText(selectedTextId);
-                activeTool = null;
-                btn.classList.remove('active');
-            } else if (tool === 'delete' && selectedTextId) {
-                deleteSelectedText();
-                activeTool = null;
-                btn.classList.remove('active');
-            }
-        });
     });
     
     // Text editing overlay events
@@ -556,20 +504,19 @@ function createTextElement(data) {
     textContent.dataset.textContentId = data.id;
     el.appendChild(textContent);
 
-    // Chỉ tạo handle rotate và resize
+    // Tạo 4 handle chính
+    createHandle(el, 'edit', 'handle-edit', '✎');
     createHandle(el, 'rotate', 'handle-rotate', '↻');
     createHandle(el, 'resize', 'handle-resize', '↗');
+    createHandle(el, 'delete', 'handle-delete', '🗑');
 
+    // Sự kiện cho text content
     textContent.addEventListener('pointerdown', (e) => {
         if (e.target.closest('.text-handle')) return;
         e.preventDefault();
         e.stopPropagation();
         selectText(data.id);
-        if (activeTool) {
-            handleActiveTool(data.id, e);
-        } else {
-            startDrag(e, data.id);
-        }
+        startDrag(e, data.id);
     });
 
     textContent.addEventListener('dblclick', (e) => {
@@ -578,13 +525,26 @@ function createTextElement(data) {
         startEditText(data.id);
     });
 
+    // Gán sự kiện cho từng handle
     const handleElements = el.querySelectorAll('.text-handle');
     handleElements.forEach(handle => {
         const handleType = handle.classList[1]?.replace('handle-', '');
-        if (handleType === 'rotate') {
+        if (handleType === 'edit') {
+            handle.addEventListener('pointerdown', (e) => {
+                e.stopPropagation();
+                selectText(data.id);
+                startEditText(data.id);
+            });
+        } else if (handleType === 'rotate') {
             handle.addEventListener('pointerdown', (e) => startRotate(e, data.id));
         } else if (handleType === 'resize') {
             handle.addEventListener('pointerdown', (e) => startScaleResize(e, data.id));
+        } else if (handleType === 'delete') {
+            handle.addEventListener('pointerdown', (e) => {
+                e.stopPropagation();
+                selectText(data.id);
+                deleteSelectedText();
+            });
         }
     });
 
@@ -600,28 +560,6 @@ function createHandle(parent, type, className, icon) {
     handle.style.touchAction = 'none';
     handle.setAttribute('aria-label', type);
     parent.appendChild(handle);
-}
-
-function handleActiveTool(id, e) {
-    switch (activeTool) {
-        case 'scale':
-            startScaleResize(e, id);
-            break;
-        case 'width':
-            startWidthResize(e, id);
-            break;
-        case 'height':
-            startHeightResize(e, id);
-            break;
-        case 'rotate':
-            startRotate(e, id);
-            break;
-        default:
-            startDrag(e, id);
-    }
-    // Reset activeTool sau khi thực hiện
-    activeTool = null;
-    toolBtns.forEach(b => b.classList.remove('active'));
 }
 
 function updateTextElement(data) {
@@ -761,9 +699,6 @@ function updateTextControlsPanel() {
         }
     } else {
         textControlsPanel.classList.add('hidden');
-        // Reset active tool
-        activeTool = null;
-        toolBtns.forEach(b => b.classList.remove('active'));
     }
 }
 
@@ -925,19 +860,17 @@ function enterTextEditingMode() {
         textContent.setAttribute('contenteditable', 'false');
         el.appendChild(textContent);
         
+        createHandle(el, 'edit', 'handle-edit', '✎');
         createHandle(el, 'rotate', 'handle-rotate', '↻');
         createHandle(el, 'resize', 'handle-resize', '↗');
+        createHandle(el, 'delete', 'handle-delete', '🗑');
         
         textContent.addEventListener('pointerdown', (e) => {
             if (e.target.closest('.text-handle')) return;
             e.preventDefault();
             e.stopPropagation();
             selectText(data.id);
-            if (activeTool) {
-                handleActiveTool(data.id, e);
-            } else {
-                startDrag(e, data.id);
-            }
+            startDrag(e, data.id);
         });
         
         textContent.addEventListener('dblclick', (e) => {
@@ -949,10 +882,22 @@ function enterTextEditingMode() {
         const handleElements = el.querySelectorAll('.text-handle');
         handleElements.forEach(handle => {
             const handleType = handle.classList[1]?.replace('handle-', '');
-            if (handleType === 'rotate') {
+            if (handleType === 'edit') {
+                handle.addEventListener('pointerdown', (e) => {
+                    e.stopPropagation();
+                    selectText(data.id);
+                    startEditText(data.id);
+                });
+            } else if (handleType === 'rotate') {
                 handle.addEventListener('pointerdown', (e) => startRotate(e, data.id));
             } else if (handleType === 'resize') {
                 handle.addEventListener('pointerdown', (e) => startScaleResize(e, data.id));
+            } else if (handleType === 'delete') {
+                handle.addEventListener('pointerdown', (e) => {
+                    e.stopPropagation();
+                    selectText(data.id);
+                    deleteSelectedText();
+                });
             }
         });
         
@@ -1043,76 +988,6 @@ function stopDrag() {
     saveTextLayers();
 }
 
-function startWidthResize(e, id) {
-    e.preventDefault();
-    e.stopPropagation();
-    const data = getTextData(id);
-    if (!data) return;
-    selectText(id);
-    
-    const overlay = isTextEditingMode ? textEditOverlayLayer : overlayLayer;
-    const rect = overlay.getBoundingClientRect();
-    dragData = {
-        type: 'width',
-        id: id,
-        startX: e.clientX,
-        origWidth: data.width,
-        containerWidth: rect.width
-    };
-    isResizing = true;
-    
-    document.addEventListener('pointermove', onWidthResize);
-    document.addEventListener('pointerup', stopResize);
-    document.addEventListener('pointercancel', stopResize);
-}
-
-function onWidthResize(e) {
-    if (!isResizing || !dragData || dragData.type !== 'width') return;
-    e.preventDefault();
-    const dx = e.clientX - dragData.startX;
-    const data = getTextData(dragData.id);
-    if (data) {
-        const newWidth = Math.max(40, dragData.origWidth + dx);
-        data.width = Math.round(newWidth);
-        updateTextElement(data);
-    }
-}
-
-function startHeightResize(e, id) {
-    e.preventDefault();
-    e.stopPropagation();
-    const data = getTextData(id);
-    if (!data) return;
-    selectText(id);
-    
-    const overlay = isTextEditingMode ? textEditOverlayLayer : overlayLayer;
-    const rect = overlay.getBoundingClientRect();
-    dragData = {
-        type: 'height',
-        id: id,
-        startY: e.clientY,
-        origHeight: data.height,
-        containerHeight: rect.height
-    };
-    isResizing = true;
-    
-    document.addEventListener('pointermove', onHeightResize);
-    document.addEventListener('pointerup', stopResize);
-    document.addEventListener('pointercancel', stopResize);
-}
-
-function onHeightResize(e) {
-    if (!isResizing || !dragData || dragData.type !== 'height') return;
-    e.preventDefault();
-    const dy = e.clientY - dragData.startY;
-    const data = getTextData(dragData.id);
-    if (data) {
-        const newHeight = Math.max(40, dragData.origHeight + dy);
-        data.height = Math.round(newHeight);
-        updateTextElement(data);
-    }
-}
-
 function startScaleResize(e, id) {
     e.preventDefault();
     e.stopPropagation();
@@ -1151,7 +1026,6 @@ function onScaleResize(e) {
     if (data) {
         data.fontSize = newSize;
         updateTextElement(data);
-        // Cập nhật slider
         if (selectedTextId === data.id) {
             fontSizeSlider.value = newSize;
             fontSizeValue.textContent = newSize + 'px';
@@ -1215,8 +1089,6 @@ function onRotate(e) {
 function stopResize() {
     isResizing = false;
     dragData = null;
-    document.removeEventListener('pointermove', onWidthResize);
-    document.removeEventListener('pointermove', onHeightResize);
     document.removeEventListener('pointermove', onScaleResize);
     document.removeEventListener('pointermove', onRotate);
     document.removeEventListener('pointerup', stopResize);
