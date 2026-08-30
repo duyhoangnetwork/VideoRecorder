@@ -35,6 +35,7 @@ let isTextEditingMode = false;
 let isEditingText = false;
 let editingTextId = null;
 let editingTextBackup = '';
+let activeTool = null; // 'scale', 'width', 'height', 'rotate', 'edit', 'delete'
 
 // ==================== DOM ====================
 const videoPreview = document.getElementById('cameraPreview');
@@ -69,6 +70,16 @@ const toast = document.getElementById('toast');
 const verticalGuide = document.getElementById('verticalGuide');
 const horizontalGuide = document.getElementById('horizontalGuide');
 
+// Text Controls Panel
+const textControlsPanel = document.getElementById('textControlsPanel');
+const fontSizeSlider = document.getElementById('fontSizeSlider');
+const fontSizeValue = document.getElementById('fontSizeValue');
+const fontSizeMinusBtn = document.getElementById('fontSizeMinusBtn');
+const fontSizePlusBtn = document.getElementById('fontSizePlusBtn');
+const opacitySlider = document.getElementById('opacitySlider');
+const opacityValueDisplay = document.getElementById('opacityValueDisplay');
+const toolBtns = document.querySelectorAll('.tool-btn');
+
 // Text editing overlay
 const textEditOverlay = document.getElementById('textEditOverlay');
 const cancelTextEditBtn = document.getElementById('cancelTextEditBtn');
@@ -77,11 +88,7 @@ const textEditCameraWrapper = document.getElementById('textEditCameraWrapper');
 const textEditCameraStage = document.getElementById('textEditCameraStage');
 const textEditCameraPreview = document.getElementById('textEditCameraPreview');
 const textEditOverlayLayer = document.getElementById('textEditOverlayLayer');
-const editOpacityRange = document.getElementById('editOpacityRange');
-const editOpacityValue = document.getElementById('editOpacityValue');
-const editDeleteTextBtn = document.getElementById('editDeleteTextBtn');
 const textEditTitle = document.getElementById('textEditTitle');
-const opacityGroup = document.getElementById('opacityGroup');
 const textareaGroup = document.getElementById('textareaGroup');
 const editTextarea = document.getElementById('editTextarea');
 const pasteTextBtn = document.getElementById('pasteTextBtn');
@@ -115,6 +122,77 @@ function setupEventListeners() {
         enterTextEditingMode();
     });
     
+    // Text Controls Panel
+    fontSizeSlider.addEventListener('input', (e) => {
+        if (!selectedTextId) return;
+        const data = getTextData(selectedTextId);
+        if (data) {
+            data.fontSize = parseInt(e.target.value);
+            fontSizeValue.textContent = data.fontSize + 'px';
+            updateTextElement(data);
+            saveTextLayers();
+        }
+    });
+    
+    opacitySlider.addEventListener('input', (e) => {
+        if (!selectedTextId) return;
+        const data = getTextData(selectedTextId);
+        if (data) {
+            data.opacity = parseInt(e.target.value) / 100;
+            opacityValueDisplay.textContent = e.target.value + '%';
+            updateTextElement(data);
+            saveTextLayers();
+        }
+    });
+    
+    fontSizeMinusBtn.addEventListener('click', () => {
+        if (!selectedTextId) return;
+        const data = getTextData(selectedTextId);
+        if (data) {
+            data.fontSize = Math.max(12, data.fontSize - 2);
+            fontSizeSlider.value = data.fontSize;
+            fontSizeValue.textContent = data.fontSize + 'px';
+            updateTextElement(data);
+            saveTextLayers();
+        }
+    });
+    
+    fontSizePlusBtn.addEventListener('click', () => {
+        if (!selectedTextId) return;
+        const data = getTextData(selectedTextId);
+        if (data) {
+            data.fontSize = Math.min(100, data.fontSize + 2);
+            fontSizeSlider.value = data.fontSize;
+            fontSizeValue.textContent = data.fontSize + 'px';
+            updateTextElement(data);
+            saveTextLayers();
+        }
+    });
+    
+    toolBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+            const tool = btn.dataset.tool;
+            if (activeTool === tool) {
+                activeTool = null;
+                btn.classList.remove('active');
+            } else {
+                activeTool = tool;
+                toolBtns.forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+            }
+            // Nếu là edit hoặc delete thì thực hiện ngay
+            if (tool === 'edit' && selectedTextId) {
+                startEditText(selectedTextId);
+                activeTool = null;
+                btn.classList.remove('active');
+            } else if (tool === 'delete' && selectedTextId) {
+                deleteSelectedText();
+                activeTool = null;
+                btn.classList.remove('active');
+            }
+        });
+    });
+    
     // Text editing overlay events
     cancelTextEditBtn.addEventListener('click', () => {
         if (isEditingText) cancelEditText();
@@ -124,29 +202,6 @@ function setupEventListeners() {
     doneTextEditBtn.addEventListener('click', () => {
         if (isEditingText) finishEditText();
         exitTextEditingMode();
-    });
-    
-    editDeleteTextBtn.addEventListener('click', () => {
-        if (selectedTextId) {
-            deleteSelectedText();
-            if (textLayers.length === 0) {
-                exitTextEditingMode();
-            } else {
-                selectText(textLayers[0].id);
-                syncTextEditUI();
-            }
-        }
-    });
-    
-    editOpacityRange.addEventListener('input', (e) => {
-        if (!selectedTextId) return;
-        const data = getTextData(selectedTextId);
-        if (data) {
-            data.opacity = parseInt(e.target.value) / 100;
-            editOpacityValue.textContent = e.target.value;
-            updateTextElement(data);
-            saveTextLayers();
-        }
     });
     
     // Nút Dán
@@ -172,7 +227,7 @@ function setupEventListeners() {
 
     // Xử lý chạm ra ngoài để deselect
     document.addEventListener('pointerdown', (e) => {
-        if (!e.target.closest('.text-overlay') && !e.target.closest('.text-handle')) {
+        if (!e.target.closest('.text-overlay') && !e.target.closest('.text-handle') && !e.target.closest('#textControlsPanel')) {
             deselectText();
         }
     });
@@ -501,19 +556,20 @@ function createTextElement(data) {
     textContent.dataset.textContentId = data.id;
     el.appendChild(textContent);
 
+    // Chỉ tạo handle rotate và resize
     createHandle(el, 'rotate', 'handle-rotate', '↻');
-    createHandle(el, 'edit', 'handle-edit', '✎');
-    createHandle(el, 'width', 'handle-width', '↔');
-    createHandle(el, 'height', 'handle-height', '↕');
     createHandle(el, 'resize', 'handle-resize', '↗');
-    createHandle(el, 'delete', 'handle-delete', '🗑');
 
     textContent.addEventListener('pointerdown', (e) => {
         if (e.target.closest('.text-handle')) return;
         e.preventDefault();
         e.stopPropagation();
         selectText(data.id);
-        startDrag(e, data.id);
+        if (activeTool) {
+            handleActiveTool(data.id, e);
+        } else {
+            startDrag(e, data.id);
+        }
     });
 
     textContent.addEventListener('dblclick', (e) => {
@@ -527,24 +583,8 @@ function createTextElement(data) {
         const handleType = handle.classList[1]?.replace('handle-', '');
         if (handleType === 'rotate') {
             handle.addEventListener('pointerdown', (e) => startRotate(e, data.id));
-        } else if (handleType === 'edit') {
-            handle.addEventListener('pointerdown', (e) => {
-                e.stopPropagation();
-                selectText(data.id);
-                startEditText(data.id);
-            });
-        } else if (handleType === 'width') {
-            handle.addEventListener('pointerdown', (e) => startWidthResize(e, data.id));
-        } else if (handleType === 'height') {
-            handle.addEventListener('pointerdown', (e) => startHeightResize(e, data.id));
         } else if (handleType === 'resize') {
             handle.addEventListener('pointerdown', (e) => startScaleResize(e, data.id));
-        } else if (handleType === 'delete') {
-            handle.addEventListener('pointerdown', (e) => {
-                e.stopPropagation();
-                selectText(data.id);
-                deleteSelectedText();
-            });
         }
     });
 
@@ -560,6 +600,28 @@ function createHandle(parent, type, className, icon) {
     handle.style.touchAction = 'none';
     handle.setAttribute('aria-label', type);
     parent.appendChild(handle);
+}
+
+function handleActiveTool(id, e) {
+    switch (activeTool) {
+        case 'scale':
+            startScaleResize(e, id);
+            break;
+        case 'width':
+            startWidthResize(e, id);
+            break;
+        case 'height':
+            startHeightResize(e, id);
+            break;
+        case 'rotate':
+            startRotate(e, id);
+            break;
+        default:
+            startDrag(e, id);
+    }
+    // Reset activeTool sau khi thực hiện
+    activeTool = null;
+    toolBtns.forEach(b => b.classList.remove('active'));
 }
 
 function updateTextElement(data) {
@@ -615,8 +677,8 @@ function selectText(id) {
     if (isTextEditingMode) {
         const editEl = document.getElementById(`edit-${id}`);
         if (editEl) editEl.classList.add('selected');
-        syncTextEditUI();
     }
+    updateTextControlsPanel();
     updateTextList();
 }
 
@@ -629,6 +691,7 @@ function deselectText() {
             if (editEl) editEl.classList.remove('selected');
         }
         selectedTextId = null;
+        updateTextControlsPanel();
         updateTextList();
     }
 }
@@ -647,6 +710,7 @@ function deleteSelectedText() {
     }
     textLayers = textLayers.filter(t => t.id !== selectedTextId);
     selectedTextId = null;
+    updateTextControlsPanel();
     updateTextList();
     saveTextLayers();
 }
@@ -685,40 +749,52 @@ function updateTextList() {
     });
 }
 
+function updateTextControlsPanel() {
+    if (selectedTextId) {
+        textControlsPanel.classList.remove('hidden');
+        const data = getTextData(selectedTextId);
+        if (data) {
+            fontSizeSlider.value = data.fontSize;
+            fontSizeValue.textContent = data.fontSize + 'px';
+            opacitySlider.value = data.opacity * 100;
+            opacityValueDisplay.textContent = Math.round(data.opacity * 100) + '%';
+        }
+    } else {
+        textControlsPanel.classList.add('hidden');
+        // Reset active tool
+        activeTool = null;
+        toolBtns.forEach(b => b.classList.remove('active'));
+    }
+}
+
 // ==================== EDIT TEXT FUNCTIONALITY ====================
 function startEditText(id) {
     const data = getTextData(id);
     if (!data) return;
     selectText(id);
     
-    // Lưu backup nội dung
     editingTextId = id;
     editingTextBackup = data.content;
     isEditingText = true;
     
-    // Xóa nội dung hiển thị
     data.content = '';
     updateTextElement(data);
     updateTextList();
     saveTextLayers();
     
-    // Cập nhật UI
     textEditTitle.textContent = 'Nhập văn bản';
-    opacityGroup.style.display = 'none';
     textareaGroup.style.display = 'block';
-    editDeleteTextBtn.style.display = 'none';
+    editTextarea.value = '';
+    editTextarea.focus();
     
-    // Thêm class 'editing' cho text overlay để ẩn handles
     const el = document.getElementById(id);
     if (el) el.classList.add('editing');
     if (isTextEditingMode) {
         const editEl = document.getElementById(`edit-${id}`);
         if (editEl) editEl.classList.add('editing');
     }
-    
-    // Đặt giá trị và focus textarea
-    editTextarea.value = '';
-    editTextarea.focus();
+    // Ẩn panel controls khi đang edit
+    textControlsPanel.classList.add('hidden');
 }
 
 function handleTextareaInput() {
@@ -734,7 +810,6 @@ function handleTextareaInput() {
 function finishEditText() {
     if (isEditingText) {
         isEditingText = false;
-        // Lấy nội dung cuối cùng từ textarea
         const data = getTextData(editingTextId);
         if (data) {
             data.content = editTextarea.value;
@@ -742,21 +817,21 @@ function finishEditText() {
             updateTextList();
             saveTextLayers();
         }
-        // Xóa class 'editing'
         const el = document.getElementById(editingTextId);
         if (el) el.classList.remove('editing');
         if (isTextEditingMode) {
             const editEl = document.getElementById(`edit-${editingTextId}`);
             if (editEl) editEl.classList.remove('editing');
         }
-        // Reset UI
         textEditTitle.textContent = 'Chỉnh văn bản';
-        opacityGroup.style.display = 'block';
         textareaGroup.style.display = 'none';
-        editDeleteTextBtn.style.display = 'block';
         editTextarea.value = '';
         editingTextId = null;
         editingTextBackup = '';
+        // Hiện lại panel controls nếu có selected text
+        if (selectedTextId) {
+            textControlsPanel.classList.remove('hidden');
+        }
     }
 }
 
@@ -769,22 +844,21 @@ function cancelEditText() {
             updateTextList();
             saveTextLayers();
         }
-        // Xóa class 'editing'
         const el = document.getElementById(editingTextId);
         if (el) el.classList.remove('editing');
         if (isTextEditingMode) {
             const editEl = document.getElementById(`edit-${editingTextId}`);
             if (editEl) editEl.classList.remove('editing');
         }
-        // Reset UI
         textEditTitle.textContent = 'Chỉnh văn bản';
-        opacityGroup.style.display = 'block';
         textareaGroup.style.display = 'none';
-        editDeleteTextBtn.style.display = 'block';
         editTextarea.value = '';
         isEditingText = false;
         editingTextId = null;
         editingTextBackup = '';
+        if (selectedTextId) {
+            textControlsPanel.classList.remove('hidden');
+        }
     }
 }
 
@@ -793,9 +867,7 @@ async function handlePaste() {
     try {
         const text = await navigator.clipboard.readText();
         editTextarea.value += text;
-        // Kích hoạt sự kiện input
         handleTextareaInput();
-        // Đặt con trỏ cuối
         editTextarea.focus();
         editTextarea.setSelectionRange(editTextarea.value.length, editTextarea.value.length);
     } catch (err) {
@@ -854,18 +926,18 @@ function enterTextEditingMode() {
         el.appendChild(textContent);
         
         createHandle(el, 'rotate', 'handle-rotate', '↻');
-        createHandle(el, 'edit', 'handle-edit', '✎');
-        createHandle(el, 'width', 'handle-width', '↔');
-        createHandle(el, 'height', 'handle-height', '↕');
         createHandle(el, 'resize', 'handle-resize', '↗');
-        createHandle(el, 'delete', 'handle-delete', '🗑');
         
         textContent.addEventListener('pointerdown', (e) => {
             if (e.target.closest('.text-handle')) return;
             e.preventDefault();
             e.stopPropagation();
             selectText(data.id);
-            startDrag(e, data.id);
+            if (activeTool) {
+                handleActiveTool(data.id, e);
+            } else {
+                startDrag(e, data.id);
+            }
         });
         
         textContent.addEventListener('dblclick', (e) => {
@@ -879,24 +951,8 @@ function enterTextEditingMode() {
             const handleType = handle.classList[1]?.replace('handle-', '');
             if (handleType === 'rotate') {
                 handle.addEventListener('pointerdown', (e) => startRotate(e, data.id));
-            } else if (handleType === 'edit') {
-                handle.addEventListener('pointerdown', (e) => {
-                    e.stopPropagation();
-                    selectText(data.id);
-                    startEditText(data.id);
-                });
-            } else if (handleType === 'width') {
-                handle.addEventListener('pointerdown', (e) => startWidthResize(e, data.id));
-            } else if (handleType === 'height') {
-                handle.addEventListener('pointerdown', (e) => startHeightResize(e, data.id));
             } else if (handleType === 'resize') {
                 handle.addEventListener('pointerdown', (e) => startScaleResize(e, data.id));
-            } else if (handleType === 'delete') {
-                handle.addEventListener('pointerdown', (e) => {
-                    e.stopPropagation();
-                    selectText(data.id);
-                    deleteSelectedText();
-                });
             }
         });
         
@@ -912,7 +968,6 @@ function enterTextEditingMode() {
         selectText(textLayers[0].id);
     }
     
-    syncTextEditUI();
     textEditOverlay.classList.remove('hidden');
     document.body.style.overflow = 'hidden';
 }
@@ -925,23 +980,13 @@ function exitTextEditingMode() {
     textEditOverlayLayer.innerHTML = '';
     textEditCameraPreview.srcObject = null;
     
-    // Đảm bảo trạng thái edit kết thúc
     if (isEditingText) {
-        // Nếu đang edit mà thoát, không lưu nội dung mới
         cancelEditText();
     }
+    updateTextControlsPanel();
 }
 
-function syncTextEditUI() {
-    if (!selectedTextId) return;
-    const data = getTextData(selectedTextId);
-    if (data) {
-        editOpacityRange.value = data.opacity * 100;
-        editOpacityValue.textContent = Math.round(data.opacity * 100);
-    }
-}
-
-// ==================== DRAG & HANDLERS (giữ nguyên) ====================
+// ==================== DRAG & HANDLERS ====================
 function startDrag(e, id) {
     if (e.target.closest('.text-handle')) return;
     e.preventDefault();
@@ -1106,6 +1151,11 @@ function onScaleResize(e) {
     if (data) {
         data.fontSize = newSize;
         updateTextElement(data);
+        // Cập nhật slider
+        if (selectedTextId === data.id) {
+            fontSizeSlider.value = newSize;
+            fontSizeValue.textContent = newSize + 'px';
+        }
     }
 }
 
@@ -1204,7 +1254,7 @@ function updateTextPositionsFromPercent() {
     textLayers.forEach(data => updateTextElement(data));
 }
 
-// ==================== RECORDING (giữ nguyên) ====================
+// ==================== RECORDING ====================
 function getSupportedMimeType() {
     const types = [
         'video/webm;codecs=vp9,opus',
